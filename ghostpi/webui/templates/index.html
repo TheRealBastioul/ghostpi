@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostPi</title>
+<style>
+  :root {
+    --bg:     #0d0d0d;
+    --panel:  #161616;
+    --border: #2a2a2a;
+    --green:  #00ff41;
+    --amber:  #ffb300;
+    --red:    #ff3333;
+    --blue:   #4fc3f7;
+    --text:   #c8c8c8;
+    --dim:    #666;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "DejaVu Sans Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ── Header ────────────────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { color: var(--green); font-size: 1.3rem; letter-spacing: 2px; }
+  #mode-badge {
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+  .badge-passive  { background: #1a3a1a; color: var(--green); border: 1px solid var(--green); }
+  .badge-active   { background: #3a1a1a; color: var(--red);   border: 1px solid var(--red); }
+  .badge-review   { background: #1a1a3a; color: var(--blue);  border: 1px solid var(--blue); }
+  #status-bar {
+    font-size: 0.72rem;
+    color: var(--dim);
+    padding: 4px 18px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Stats strip ────────────────────────────────────────────────────────── */
+  #stats {
+    display: flex;
+    gap: 2px;
+    padding: 8px 18px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .stat-box {
+    flex: 1;
+    text-align: center;
+    padding: 6px 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .stat-box .val { font-size: 1.4rem; color: var(--green); font-weight: bold; }
+  .stat-box .lbl { font-size: 0.65rem; color: var(--dim); text-transform: uppercase; }
+
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  main {
+    padding: 12px 18px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  section { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  section header {
+    background: #1e1e1e;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    color: var(--amber);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* ── Tables ─────────────────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left;
+    padding: 5px 10px;
+    font-size: 0.65rem;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    background: #111;
+    text-transform: uppercase;
+  }
+  td { padding: 5px 10px; border-bottom: 1px solid #1e1e1e; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1a1a1a; }
+  .bssid { font-size: 0.78rem; color: var(--dim); }
+  .essid { color: var(--text); font-weight: bold; }
+  .enc-WPA2 { color: var(--amber); }
+  .enc-WPA  { color: #e67e00; }
+  .enc-WEP  { color: var(--red); }
+  .enc-OPN  { color: var(--red); font-weight: bold; }
+  .pwr      { color: var(--green); }
+  .mono     { font-family: monospace; }
+
+  /* ── Target select button ───────────────────────────────────────────────── */
+  .btn-select {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.72rem;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .btn-select:hover { border-color: var(--amber); color: var(--amber); }
+  .btn-select.selected { border-color: var(--red); color: var(--red); }
+  #active-locked { color: var(--red); font-size: 0.75rem; padding: 8px 12px; }
+
+  /* ── PCAP list ──────────────────────────────────────────────────────────── */
+  #pcap-list { padding: 8px 12px; }
+  #pcap-list a {
+    display: inline-block;
+    margin: 3px 4px;
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--blue);
+    text-decoration: none;
+    font-size: 0.78rem;
+  }
+  #pcap-list a:hover { border-color: var(--blue); }
+  #pcap-list .empty { color: var(--dim); font-style: italic; }
+
+  /* ── Handshake indicator ────────────────────────────────────────────────── */
+  .hs-badge {
+    display: inline-block;
+    background: #1a3a1a;
+    color: var(--green);
+    border: 1px solid var(--green);
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 0.65rem;
+  }
+
+  /* ── Footer ─────────────────────────────────────────────────────────────── */
+  footer {
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.65rem;
+    padding: 14px;
+    border-top: 1px solid var(--border);
+    margin-top: 10px;
+  }
+  footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>&#9650; GhostPi</h1>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <span id="mode-badge" class="badge-passive">PASSIVE</span>
+    <span id="clock" style="color:var(--dim);font-size:0.75rem;"></span>
+  </div>
+</header>
+
+<div id="status-bar">Initialising...</div>
+
+<!-- Stats strip -->
+<div id="stats">
+  <div class="stat-box"><div class="val" id="s-nets">0</div><div class="lbl">Networks</div></div>
+  <div class="stat-box"><div class="val" id="s-clients">0</div><div class="lbl">Clients</div></div>
+  <div class="stat-box"><div class="val" id="s-probes">0</div><div class="lbl">Probes</div></div>
+  <div class="stat-box"><div class="val" id="s-hs">0</div><div class="lbl">Handshakes</div></div>
+</div>
+
+<main>
+
+  <!-- Networks -->
+  <section>
+    <header>Access Points</header>
+    <div id="active-locked" style="display:none;">
+      &#128274; Active mode disabled – set ACTIVE_MODE_ENABLED=True to enable target selection
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>ESSID / BSSID</th>
+          <th>Ch</th>
+          <th>Enc</th>
+          <th>Signal</th>
+          <th>Clients</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="net-tbody">
+        <tr><td colspan="6" style="color:var(--dim);text-align:center;padding:20px;">
+          Waiting for capture data…
+        </td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Clients -->
+  <section>
+    <header>Clients</header>
+    <table>
+      <thead>
+        <tr>
+          <th>Station MAC</th>
+          <th>Associated BSSID</th>
+          <th>Signal</th>
+          <th>Packets</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody id="cli-tbody">
+        <tr><td colspan="5" style="color:var(--dim);text-align:center;padding:16px;">
+          No clients observed yet
+        </td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Probe requests -->
+  <section>
+    <header>Probe Requests</header>
+    <table>
+      <thead>
+        <tr>
+          <th>Station MAC</th>
+          <th>Probed ESSID</th>
+        </tr>
+      </thead>
+      <tbody id="probe-tbody">
+        <tr><td colspan="2" style="color:var(--dim);text-align:center;padding:16px;">
+          No probe requests observed yet
+        </td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- PCAP Downloads -->
+  <section>
+    <header>Capture Files</header>
+    <div id="pcap-list"><span class="empty">No capture files yet</span></div>
+  </section>
+
+</main>
+
+<footer>
+  GhostPi &mdash; for authorized security assessments only &mdash;
+  auto-refresh every 15&thinsp;s &mdash;
+  <a href="/api/data">raw JSON</a>
+</footer>
+
+<script>
+"use strict";
+
+let selectedBssid = null;
+let activeEnabled = false;
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function tickClock() {
+  const now = new Date();
+  document.getElementById("clock").textContent =
+    now.toTimeString().slice(0, 8);
+}
+tickClock();
+setInterval(tickClock, 1000);
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function encClass(privacy) {
+  const p = String(privacy).toUpperCase();
+  if (p.includes("WPA2")) return "enc-WPA2";
+  if (p.includes("WPA"))  return "enc-WPA";
+  if (p.includes("WEP"))  return "enc-WEP";
+  if (p.includes("OPN") || p === "") return "enc-OPN";
+  return "";
+}
+
+// ── Fetch & render ──────────────────────────────────────────────────────────
+async function fetchAll() {
+  try {
+    const [statusRes, netsRes, cliRes, probeRes, pcapRes] = await Promise.all([
+      fetch("/api/status"),
+      fetch("/api/networks"),
+      fetch("/api/clients"),
+      fetch("/api/probes"),
+      fetch("/api/pcaps"),
+    ]);
+
+    const status = await statusRes.json();
+    const nets   = await netsRes.json();
+    const clis   = await cliRes.json();
+    const probes = await probeRes.json();
+    const pcaps  = await pcapRes.json();
+
+    renderStatus(status);
+    renderNetworks(nets, status);
+    renderClients(clis);
+    renderProbes(probes);
+    renderPcaps(pcaps);
+  } catch(e) {
+    document.getElementById("status-bar").textContent = "Connection error: " + e.message;
+  }
+}
+
+function renderStatus(s) {
+  activeEnabled = !!s.active_enabled;
+
+  document.getElementById("status-bar").textContent = s.status_message || "Running";
+  document.getElementById("s-nets").textContent    = s.network_count    || 0;
+  document.getElementById("s-clients").textContent = s.client_count     || 0;
+  document.getElementById("s-probes").textContent  = s.probe_count      || 0;
+  document.getElementById("s-hs").textContent      = s.handshake_count  || 0;
+
+  const badge = document.getElementById("mode-badge");
+  const mode  = (s.mode || "passive").toLowerCase();
+  badge.textContent = mode.toUpperCase();
+  badge.className   = "badge-" + mode;
+
+  document.getElementById("active-locked").style.display =
+    (!activeEnabled) ? "block" : "none";
+}
+
+function renderNetworks(nets, status) {
+  // Build a client-count map from state (we re-fetch clients separately)
+  const tbody = document.getElementById("net-tbody");
+  if (!nets.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--dim);text-align:center;padding:20px;">No networks observed yet</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = nets.map(n => {
+    const bssid    = esc(n.bssid || "");
+    const essid    = n.essid ? esc(n.essid) : `<span style="color:var(--dim)">&lt;hidden&gt;</span>`;
+    const ch       = esc(n.channel || "?");
+    const privacy  = esc(n.privacy || "OPN");
+    const pwr      = esc(n.power || "?");
+    const eClass   = encClass(n.privacy);
+    const isSelected = (bssid === selectedBssid);
+
+    const selectBtn = activeEnabled
+      ? `<button class="btn-select ${isSelected ? "selected" : ""}"
+           onclick="selectTarget('${bssid}')">${isSelected ? "&#9654; Target" : "Select"}</button>`
+      : "";
+
+    return `<tr>
+      <td>
+        <div class="essid">${essid}</div>
+        <div class="bssid">${bssid}</div>
+      </td>
+      <td>${ch}</td>
+      <td><span class="${eClass}">${privacy}</span></td>
+      <td class="pwr">${pwr} dBm</td>
+      <td>&mdash;</td>
+      <td>${selectBtn}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderClients(clis) {
+  const tbody = document.getElementById("cli-tbody");
+  if (!clis.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--dim);text-align:center;padding:16px;">No clients observed yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = clis.map(c => `<tr>
+    <td class="mono">${esc(c.mac || "")}</td>
+    <td class="bssid">${esc(c.bssid || "(not assoc)")}</td>
+    <td class="pwr">${esc(c.power || "?")} dBm</td>
+    <td>${esc(c.packets || "?")}</td>
+    <td style="color:var(--dim)">${esc(c.last_seen || "")}</td>
+  </tr>`).join("");
+}
+
+function renderProbes(probes) {
+  const tbody = document.getElementById("probe-tbody");
+  if (!probes.length) {
+    tbody.innerHTML = `<tr><td colspan="2" style="color:var(--dim);text-align:center;padding:16px;">No probe requests observed yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = probes.map(p => `<tr>
+    <td class="mono">${esc(p.mac || "")}</td>
+    <td>${esc(p.essid || "")}</td>
+  </tr>`).join("");
+}
+
+function renderPcaps(pcaps) {
+  const div = document.getElementById("pcap-list");
+  if (!pcaps.length) {
+    div.innerHTML = `<span class="empty">No capture files yet</span>`;
+    return;
+  }
+  div.innerHTML = pcaps.map(f =>
+    `<a href="/download/${encodeURIComponent(f)}" download>${esc(f)}</a>`
+  ).join(" ");
+}
+
+async function selectTarget(bssid) {
+  if (!activeEnabled) return;
+  try {
+    const res = await fetch(`/api/select/${encodeURIComponent(bssid)}`, { method: "POST" });
+    if (res.ok) {
+      selectedBssid = bssid;
+      await fetchAll();
+    }
+  } catch(e) {
+    console.error("Select target failed:", e);
+  }
+}
+
+// Initial fetch + auto-refresh every 15 s
+fetchAll();
+setInterval(fetchAll, 15000);
+</script>
+</body>
+</html>

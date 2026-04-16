@@ -1,0 +1,40 @@
+# GhostPi boot/config.txt additions
+# Append these lines to /boot/config.txt on the Pi Zero WH
+
+# ── Power / stealth ─────────────────────────────────────────────────────────
+
+# Disable HDMI output entirely (saves ~25 mA, no video output needed)
+hdmi_blanking=2
+hdmi_ignore_hotplug=1
+
+# Disable the green ACT LED so the device is visually silent
+dtparam=act_led_trigger=none
+dtparam=act_led_activelow=off
+
+# Disable PWR LED (red) on Pi Zero
+dtparam=pwr_led_trigger=none
+dtparam=pwr_led_activelow=off
+
+# ── Interfaces ───────────────────────────────────────────────────────────────
+
+# Enable SPI for the e-ink bonnet (SSD1680 driver)
+dtparam=spi=on
+
+# Enable I2C (optional, for future sensors)
+dtparam=i2c_arm=on
+
+# Enable USB OTG gadget mode (required for g_ether USB networking)
+dtoverlay=dwc2
+
+# ── Performance ──────────────────────────────────────────────────────────────
+
+# GPU memory split: Pi Zero runs headless, give GPU minimum RAM
+gpu_mem=16
+
+# Disable Bluetooth to free up UART and reduce power draw
+dtoverlay=disable-bt
+
+# ── Audio ────────────────────────────────────────────────────────────────────
+
+# Disable onboard audio (not needed, saves resources)
+dtparam=audio=off
