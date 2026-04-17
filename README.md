@@ -54,41 +54,90 @@ No breadboard, no jumper wires.
 
 ## Installation
 
-### 1. Flash OS
+### Method A — SD card prep on your Linux machine (recommended)
 
-Flash **Raspberry Pi OS Lite (32-bit)** to a microSD card.  Before first
-boot, create an empty `ssh` file on the boot partition to enable SSH.
+Everything is installed from your Linux machine directly onto the SD card.
+The Pi just boots and runs — no SSH install step, no waiting for `apt` on
+the Pi Zero's slow single core.
 
-### 2. First boot and SSH in
+**Requirements:** Debian/Ubuntu Linux host with root access.
+`qemu-user-static` and `binfmt-support` are installed automatically.
+
+#### 1. Flash the OS
+
+Flash **Raspberry Pi OS Lite 32-bit** (Bookworm / 2024-10 / 4-13 release)
+to a microSD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
+
+In Imager's **advanced options** (gear icon):
+- Set hostname, username (`admin`), and password
+- Optionally enable SSH if you want remote access later
+
+Do **not** eject the SD card yet.
+
+#### 2. Run the host-side preparation script
+
+```bash
+# Identify your SD card device — check dmesg or lsblk after inserting
+lsblk
+
+# Run as root (replace /dev/sdX with your actual device)
+sudo bash setup/prepare-sd.sh --device /dev/sdX
+```
+
+If you have already mounted the partitions yourself:
+
+```bash
+sudo bash setup/prepare-sd.sh --boot /mnt/sdboot --root /mnt/sdroot
+```
+
+This script will:
+1. Install `qemu-user-static` on your host (for ARM emulation)
+2. Download and install all apt packages into the SD card rootfs via ARM chroot
+3. Install Python packages (`adafruit-circuitpython-epd`, `ssd1680`)
+4. Copy the GhostPi application to `/home/admin/ghostpi`
+5. Write network configs (dhcpcd static IP, dnsmasq DHCP)
+6. Install and enable the `ghostpi` and `dnsmasq` systemd services
+7. Write `config.txt` and `cmdline.txt` boot settings
+
+#### 3. Eject and boot
+
+```bash
+sudo eject /dev/sdX
+```
+
+Insert the SD card into the Pi Zero WH and power on.
+GhostPi starts automatically — no further setup required.
+
+---
+
+### Method B — Direct install on the Pi (fallback)
+
+Use this if you're installing onto a Pi that is already running and
+has network access.
+
+#### 1. Flash OS and SSH in
+
+Flash Raspberry Pi OS Lite 32-bit, enable SSH on the boot partition, then:
 
 ```bash
 ssh admin@<pi-ip>
 ```
 
-### 3. Clone or copy this repository
+#### 2. Clone and run the installer
 
 ```bash
 git clone <your-repo-url> ~/ghostpi
-# or scp -r ghostpi/ admin@<pi-ip>:~/
-```
-
-### 4. Run the installer
-
-```bash
 cd ~/ghostpi
 sudo bash setup/install.sh
 ```
 
-### 5. Append boot configuration
+#### 3. Append boot configuration
 
 ```bash
-sudo cat setup/boot_config.txt >> /boot/config.txt
+sudo cat setup/boot_config.txt >> /boot/firmware/config.txt
 ```
 
-Review the file before appending – it disables HDMI, the ACT LED, and
-the PWR LED, enables SPI, and enables USB OTG gadget mode.
-
-### 6. Reboot
+#### 4. Reboot
 
 ```bash
 sudo reboot
@@ -164,8 +213,10 @@ press GPIO 6 to send a deauth burst.
 ```
 ghostpi/
 ├── setup/
-│   ├── boot_config.txt     /boot/config.txt additions
-│   └── install.sh          installer
+│   ├── prepare-sd.sh       host-side SD card installer (primary)
+│   ├── install.sh          on-Pi installer (fallback)
+│   ├── repair.sh           on-Pi repair / reinstall tool
+│   └── boot_config.txt     /boot/firmware/config.txt additions
 ├── ghostpi/
 │   ├── config.py           central config
 │   ├── main.py             entry point
