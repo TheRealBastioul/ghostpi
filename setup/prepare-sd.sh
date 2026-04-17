@@ -39,6 +39,9 @@ MOUNTED_BOOT=false
 MOUNTED_ROOT=false
 RESOLV_WAS_SYMLINK=false
 RESOLV_SYMLINK_TARGET=""
+PKG_FAILURES=()
+PIP_FAILED=false
+QEMU_METHOD=""   # set to "binfmt" or "static" by the host toolchain section
 
 # ─── Colour helpers ──────────────────────────────────────────────────────────
 
@@ -94,18 +97,46 @@ fi
 
 banner "Host toolchain"
 
-MISSING=()
-command -v qemu-arm-static &>/dev/null || MISSING+=(qemu-user-static)
-dpkg -l binfmt-support &>/dev/null 2>&1   || MISSING+=(binfmt-support)
-
-if [[ ${#MISSING[@]} -gt 0 ]]; then
-    info "Installing host packages: ${MISSING[*]}"
-    apt-get install -y "${MISSING[@]}"
-    update-binfmts --enable qemu-arm 2>/dev/null || true
+# Ensure binfmt_misc is mounted — required by both methods below
+if [[ ! -d /proc/sys/fs/binfmt_misc ]]; then
+    modprobe binfmt_misc 2>/dev/null || true
+    mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
 fi
 
-[[ -f /usr/bin/qemu-arm-static ]] || die "qemu-arm-static not found. Install qemu-user-static."
-ok "QEMU ARM emulation available."
+apt-get update -qq 2>/dev/null || apt-get update
+
+# ── Method 1 (preferred): qemu-user-binfmt ───────────────────────────────────
+# Modern package (Kali, Debian 2025+). Registers ARM binfmt entries using the
+# kernel F (fix-binary) flag, so no binary needs to be copied into the chroot.
+# The chroot just calls /bin/bash — the kernel routes ARM ELFs through QEMU.
+if apt-get install -y qemu-user-binfmt 2>/dev/null; then
+    systemctl restart systemd-binfmt 2>/dev/null || true
+    if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]]; then
+        QEMU_METHOD="binfmt"
+        ok "QEMU ARM ready via qemu-user-binfmt (no binary copy needed)."
+    fi
+fi
+
+# ── Method 2 (fallback): qemu-user-static ────────────────────────────────────
+# Older package — copies a static ARM binary into the chroot so the kernel can
+# find it.  Used on Ubuntu LTS and older Debian-based systems.
+if [[ -z "$QEMU_METHOD" ]]; then
+    warn "qemu-user-binfmt not available — falling back to qemu-user-static."
+    apt-get install -y qemu-user-static 2>/dev/null \
+        || die "Could not install qemu-user-static either. Check your package manager."
+    # Register binfmt entry if not already done
+    if [[ ! -e /proc/sys/fs/binfmt_misc/qemu-arm ]]; then
+        systemctl restart systemd-binfmt 2>/dev/null || \
+        update-binfmts --enable qemu-arm 2>/dev/null || true
+    fi
+    [[ -f /usr/bin/qemu-arm-static ]] \
+        || die "qemu-arm-static binary not found after install."
+    QEMU_METHOD="static"
+    ok "QEMU ARM ready via qemu-user-static (legacy mode)."
+fi
+
+[[ -n "$QEMU_METHOD" ]] \
+    || die "Could not set up ARM emulation. Ensure binfmt_misc is available: sudo modprobe binfmt_misc"
 
 # ─── Mount SD card partitions ─────────────────────────────────────────────────
 
@@ -163,8 +194,9 @@ cleanup() {
         mv "$ROOT_DIR/etc/resolv.conf.ghostpi-bak" "$ROOT_DIR/etc/resolv.conf" 2>/dev/null || true
     fi
 
-    # Remove QEMU binary we injected
-    rm -f "$ROOT_DIR/usr/bin/qemu-arm-static" 2>/dev/null || true
+    # Remove QEMU binary if we injected one (static fallback mode only)
+    [[ "${QEMU_METHOD:-}" == "static" ]] && \
+        rm -f "$ROOT_DIR/usr/bin/qemu-arm-static" 2>/dev/null || true
 
     # Unmount bind mounts in reverse order
     for mp in dev/pts dev sys proc; do
@@ -187,8 +219,12 @@ trap cleanup EXIT
 
 banner "ARM chroot setup"
 
-# Inject QEMU binary so the kernel knows how to run ARM ELF binaries
-cp /usr/bin/qemu-arm-static "$ROOT_DIR/usr/bin/qemu-arm-static"
+# With qemu-user-binfmt the kernel's F-flag entry points to the host binary —
+# no copy needed.  With qemu-user-static we must place the binary inside the
+# chroot so it's reachable across the chroot boundary.
+if [[ "$QEMU_METHOD" == "static" ]]; then
+    cp /usr/bin/qemu-arm-static "$ROOT_DIR/usr/bin/qemu-arm-static"
+fi
 
 # Bind-mount kernel pseudo-filesystems
 mount --bind /proc    "$ROOT_DIR/proc"
@@ -216,47 +252,122 @@ chmod +x "$ROOT_DIR/usr/sbin/policy-rc.d"
 
 ok "Chroot ready (QEMU ARM + bind mounts + DNS)."
 
+# Build the chroot invocation once so both apt and pip sections use the same command
+if [[ "$QEMU_METHOD" == "static" ]]; then
+    CHROOT=(chroot "$ROOT_DIR" /usr/bin/qemu-arm-static /bin/bash)
+else
+    CHROOT=(chroot "$ROOT_DIR" /bin/bash)
+fi
+
 # ─── Install system packages ──────────────────────────────────────────────────
 
 banner "System packages (apt)"
-info "This downloads ARM packages from Raspbian repos — may take several minutes."
+info "Downloading ARM packages from Raspbian repos — this may take several minutes."
 
-chroot "$ROOT_DIR" /usr/bin/qemu-arm-static /bin/bash -c "
-set -e
+# Failure log written by the chroot; read back after it exits
+PKG_FAIL_LOG="$ROOT_DIR/tmp/ghostpi-pkg-failures.txt"
+rm -f "$PKG_FAIL_LOG"
+
+# Run apt inside the ARM chroot.  We deliberately do NOT use 'set -e' here —
+# instead each package is installed individually so one missing package cannot
+# abort the whole install.  Known renames (e.g. python3-rpi.gpio → python3-rpi-lgpio
+# on newer Pi OS releases) are handled with ordered fallback names.
+"${CHROOT[@]}" << 'CHROOTEOF'
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y --no-install-recommends \
-    aircrack-ng \
-    python3 \
-    python3-pip \
-    python3-dev \
-    python3-rpi.gpio \
-    python3-pillow \
-    python3-flask \
-    dnsmasq \
-    iw \
-    wireless-tools \
-    net-tools \
-    libopenjp2-7 \
-    fonts-dejavu-core
+_fail_log=/tmp/ghostpi-pkg-failures.txt
+
+# Try primary name then any fallbacks. Never exits non-zero.
+install_pkg() {
+    local primary="$1"; shift
+    if apt-get install -y --no-install-recommends "$primary" 2>/dev/null; then
+        echo "  [+] $primary"
+        return 0
+    fi
+    for fallback in "$@"; do
+        echo "  [!] '$primary' not found, trying '$fallback'..."
+        if apt-get install -y --no-install-recommends "$fallback" 2>/dev/null; then
+            echo "  [+] $fallback (fallback for $primary)"
+            return 0
+        fi
+    done
+    echo "  [✗] Could not install '$primary' (tried all fallbacks)"
+    echo "$primary" >> "$_fail_log"
+}
+
+# Optional: install but don't fail the script if unavailable
+install_optional() {
+    local pkg="$1"
+    apt-get install -y --no-install-recommends "$pkg" 2>/dev/null \
+        && echo "  [+] $pkg (optional)" \
+        || echo "  [-] $pkg not available — skipping (optional)"
+}
+
+apt-get update -qq 2>/dev/null || apt-get update || echo "WARNING: apt-get update failed"
+
+# ── Required ─────────────────────────────────────────────────────────────────
+install_pkg aircrack-ng
+install_pkg python3
+install_pkg python3-pip
+# GPIO library — renamed in newer Raspberry Pi OS / Trixie releases
+install_pkg python3-rpi.gpio   python3-rpi-lgpio   python3-lgpio
+install_pkg python3-pillow
+install_pkg python3-flask
+install_pkg dnsmasq
+install_pkg iw
+install_pkg libopenjp2-7
+install_pkg fonts-dejavu-core
+
+# ── Optional ─────────────────────────────────────────────────────────────────
+# python3-dev: headers for compiling C extensions via pip — not needed if all
+#   wheels are pre-built for armhf (likely on Trixie)
+install_optional python3-dev
+# wireless-tools: provides iwconfig/iwlist — iw covers most cases on modern kernels
+install_optional wireless-tools
+# net-tools: provides ifconfig — iproute2 (already installed) is the modern replacement
+install_optional net-tools
+
 apt-get clean
 rm -rf /var/lib/apt/lists/*
-"
+CHROOTEOF
 
-ok "System packages installed."
+# Read failures back into the host array
+if [[ -f "$PKG_FAIL_LOG" ]]; then
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && PKG_FAILURES+=("$line")
+    done < "$PKG_FAIL_LOG"
+    rm -f "$PKG_FAIL_LOG"
+fi
+
+if [[ ${#PKG_FAILURES[@]} -gt 0 ]]; then
+    warn "Some packages could not be installed: ${PKG_FAILURES[*]}"
+    warn "GhostPi may be missing functionality — see the summary at the end."
+else
+    ok "All system packages installed."
+fi
 
 # ─── Install Python packages ──────────────────────────────────────────────────
 
 banner "Python packages (pip)"
 
-chroot "$ROOT_DIR" /usr/bin/qemu-arm-static /bin/bash -c "
-set -e
+# Temporarily suspend errexit so a pip failure doesn't kill the script —
+# we report it in the final summary instead.
+set +e
+"${CHROOT[@]}" << 'CHROOTEOF'
 pip3 install --break-system-packages --no-cache-dir \
     adafruit-circuitpython-epd \
     adafruit-circuitpython-ssd1680
-"
+CHROOTEOF
+PIP_EXIT=$?
+set -e
 
-ok "Python packages installed."
+if [[ $PIP_EXIT -ne 0 ]]; then
+    PIP_FAILED=true
+    warn "pip install failed (exit $PIP_EXIT) — e-ink display libraries are missing."
+    warn "The rest of the install will continue. You can retry on the Pi:"
+    warn "  pip3 install --break-system-packages adafruit-circuitpython-epd adafruit-circuitpython-ssd1680"
+else
+    ok "Python packages installed."
+fi
 
 # Remove the service-blocking policy file before we configure services
 rm -f "$ROOT_DIR/usr/sbin/policy-rc.d"
@@ -390,11 +501,30 @@ echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━�
 echo -e "${BOLD}${GREEN}  GhostPi SD card preparation complete!${NC}"
 echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo "  Packages installed : yes (ARM chroot via QEMU)"
 echo "  Services enabled   : ghostpi + dnsmasq"
 echo "  Boot config        : config.txt + cmdline.txt updated"
 echo "  App location on Pi : /home/$PI_USER/ghostpi"
 echo ""
+
+# ── Warn about anything that failed ──────────────────────────────────────────
+if [[ ${#PKG_FAILURES[@]} -gt 0 || "$PIP_FAILED" == "true" ]]; then
+    echo -e "${YELLOW}━━━  Installation warnings  ━━━${NC}"
+    if [[ ${#PKG_FAILURES[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}  The following apt packages could not be installed:${NC}"
+        for pkg in "${PKG_FAILURES[@]}"; do
+            echo -e "${YELLOW}    • $pkg${NC}"
+        done
+        echo -e "${YELLOW}  Fix on the Pi after boot:${NC}"
+        echo -e "${YELLOW}    sudo apt-get install ${PKG_FAILURES[*]}${NC}"
+    fi
+    if [[ "$PIP_FAILED" == "true" ]]; then
+        echo -e "${YELLOW}  pip install failed (e-ink display libraries missing).${NC}"
+        echo -e "${YELLOW}  Fix on the Pi after boot:${NC}"
+        echo -e "${YELLOW}    pip3 install --break-system-packages adafruit-circuitpython-epd adafruit-circuitpython-ssd1680${NC}"
+    fi
+    echo ""
+fi
+
 echo -e "${BOLD}Next steps:${NC}"
 echo "  1. Safely eject the SD card:    sudo eject $DEVICE"
 echo "  2. Insert it into the Pi Zero WH and power on."
