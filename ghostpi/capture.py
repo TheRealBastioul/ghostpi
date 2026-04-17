@@ -26,7 +26,7 @@ import os
 import subprocess
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 
 from config import (
@@ -56,8 +56,17 @@ class CaptureDaemon:
         # In-memory parsed state
         self._networks: dict[str, dict] = {}   # keyed by BSSID
         self._clients: dict[str, dict]  = {}   # keyed by station MAC
-        # probe_requests: station_mac → list of ESSIDs
-        self._probes: dict[str, list]   = defaultdict(list)
+        # probe_requests: station_mac → bounded deque of ESSIDs
+        self._probes: dict[str, deque] = defaultdict(
+            lambda: deque(maxlen=MAX_PROBES_PER_STA)
+        )
+
+        # Handshake count cached from background thread (avoids blocking parse loop)
+        self._hs_count: int = 0
+        self._last_hs_check: float = 0.0
+
+        # airodump-ng restart backoff counter
+        self._restart_count: int = 0
 
         # Ensure log directories exist
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -206,18 +215,21 @@ class CaptureDaemon:
                     "probes":     probed,
                 }
 
-                # Accumulate probe requests (deduplicated, bounded)
+                # Accumulate probe requests (deduplicated; deque enforces maxlen)
                 for essid in probed:
                     if essid not in self._probes[mac]:
                         self._probes[mac].append(essid)
-                self._probes[mac] = self._probes[mac][-MAX_PROBES_PER_STA:]
 
     # ── Handshake detection ───────────────────────────────────────────────────
 
-    def _count_handshakes(self) -> int:
+    # Minimum seconds between handshake recounts — avoids blocking the capture
+    # loop with O(n) subprocess calls as the session and PCAP count grows.
+    _HS_CHECK_INTERVAL = 120.0
+
+    def _count_handshakes_sync(self) -> int:
         """
-        Count PCAP files that contain a WPA handshake by checking with
-        aircrack-ng (passive read – no key cracking attempted).
+        Count PCAPs containing a WPA handshake.  Blocking — call only from
+        the dedicated background thread spawned by _update_handshakes_async().
         """
         pcap_pattern = f"{self._session_prefix}-*.cap"
         pcaps = glob.glob(pcap_pattern)
@@ -228,12 +240,29 @@ class CaptureDaemon:
                     ["aircrack-ng", "-a", "2", pcap],
                     capture_output=True, text=True, timeout=10
                 )
-                # aircrack-ng prints "1 handshake" when it finds one
                 if "handshake" in result.stdout.lower():
                     count += 1
             except Exception:
                 pass
         return count
+
+    def _update_handshakes_async(self):
+        """
+        Kick off a background handshake recount if the cache has expired.
+        Returns immediately; self._hs_count is updated when the thread finishes.
+        """
+        now = time.monotonic()
+        if now - self._last_hs_check < self._HS_CHECK_INTERVAL:
+            return
+        self._last_hs_check = now  # stamp before launch to prevent double-spawn
+
+        def _worker():
+            count = self._count_handshakes_sync()
+            self._hs_count = count  # int assignment is atomic under the GIL
+
+        threading.Thread(
+            target=_worker, name="hs-count", daemon=True
+        ).start()
 
     # ── State publishing ──────────────────────────────────────────────────────
 
@@ -249,17 +278,19 @@ class CaptureDaemon:
             )
             last_essid = newest.get("essid", "")
 
-        hs_count = self._count_handshakes()
+        # Trigger async recount (returns immediately; updates self._hs_count in bg)
+        self._update_handshakes_async()
 
         with self._lock:
             self._state["network_count"]   = len(self._networks)
             self._state["client_count"]    = len(self._clients)
             self._state["probe_count"]     = all_probes
-            self._state["handshake_count"] = hs_count
+            self._state["handshake_count"] = self._hs_count
             self._state["last_essid"]      = last_essid
             self._state["networks"]        = dict(self._networks)
             self._state["clients"]         = dict(self._clients)
-            self._state["probes"]          = dict(self._probes)
+            # Convert deques to plain lists for JSON serialisation
+            self._state["probes"]          = {k: list(v) for k, v in self._probes.items()}
             self._state["session_prefix"]  = self._session_prefix
             self._state["status_message"]  = (
                 f"Monitoring {MON_INTERFACE} | "
@@ -292,9 +323,15 @@ class CaptureDaemon:
                 else:
                     log.debug("No CSV yet, waiting...")
 
-                # Restart airodump-ng if it died unexpectedly
+                # Restart airodump-ng if it died unexpectedly (with backoff)
                 if self._proc and self._proc.poll() is not None:
-                    log.warning("airodump-ng exited unexpectedly, restarting")
+                    self._restart_count += 1
+                    delay = min(5 * self._restart_count, 60)
+                    log.warning(
+                        "airodump-ng exited unexpectedly (restart #%d, waiting %ds)",
+                        self._restart_count, delay,
+                    )
+                    time.sleep(delay)
                     self._start_airodump()
 
         finally:

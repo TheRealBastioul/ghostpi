@@ -115,7 +115,7 @@ class ButtonHandler:
             self._review_index = 0
 
         if self._display:
-            self._display.refresh(force=True)
+            self._display.request_refresh()
 
     def _on_action_press(self, channel: int):
         """GPIO 6 pressed: context-sensitive action."""
@@ -137,7 +137,7 @@ class ButtonHandler:
         with self._lock:
             self._state["status_message"] = "Manual refresh..."
         if self._display:
-            self._display.refresh(force=True)
+            self._display.request_refresh()
 
     def _action_active_deauth(self):
         """
@@ -156,7 +156,7 @@ class ButtonHandler:
             with self._lock:
                 self._state["status_message"] = "ACTIVE MODE DISABLED"
             if self._display:
-                self._display.refresh(force=True)
+                self._display.request_refresh()
             return
 
         with self._lock:
@@ -167,7 +167,7 @@ class ButtonHandler:
             with self._lock:
                 self._state["status_message"] = "No target selected"
             if self._display:
-                self._display.refresh(force=True)
+                self._display.request_refresh()
             return
 
         log.info(
@@ -179,7 +179,7 @@ class ButtonHandler:
         with self._lock:
             self._state["status_message"] = f"Deauth → {target_bssid[:17]}"
         if self._display:
-            self._display.refresh(force=True)
+            self._display.request_refresh()
 
         # Run deauth in a background thread so we don't block the GPIO callback
         threading.Thread(
@@ -218,7 +218,7 @@ class ButtonHandler:
         with self._lock:
             self._state["status_message"] = status
         if self._display:
-            self._display.refresh(force=True)
+            self._display.request_refresh()
 
     def _action_review_page(self):
         """Page through captured networks on the e-ink display (review mode)."""
@@ -229,7 +229,7 @@ class ButtonHandler:
             with self._lock:
                 self._state["status_message"] = "No networks captured yet"
             if self._display:
-                self._display.refresh(force=True)
+                self._display.request_refresh()
             return
 
         self._review_index = (self._review_index + 1) % len(networks)
@@ -251,7 +251,7 @@ class ButtonHandler:
 
         log.info("Review page: %s (%s)", essid, bssid)
         if self._display:
-            self._display.refresh(force=True)
+            self._display.request_refresh()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

@@ -56,11 +56,20 @@ class DisplayManager:
         self._lock = state_lock
         self._epd = None
         self._stop_event = threading.Event()
+        self._refresh_requested = threading.Event()
         self._thread = None
         self._last_refresh = 0.0
 
+        # Fonts loaded once and reused — ImageFont.truetype() hits the filesystem
+        self._font_sm = None
+        self._font_md = None
+        self._font_lg = None
+
         if EPD_AVAILABLE:
             self._init_display()
+            self._font_sm = self._load_font(9)
+            self._font_md = self._load_font(11)
+            self._font_lg = self._load_font(14)
 
     # ── Initialisation ────────────────────────────────────────────────────────
 
@@ -133,9 +142,9 @@ class DisplayManager:
         canvas = self._new_canvas()
         draw   = ImageDraw.Draw(canvas)
 
-        font_sm  = self._load_font(9)
-        font_med = self._load_font(11)
-        font_lg  = self._load_font(14)
+        font_sm  = self._font_sm  or self._load_font(9)
+        font_med = self._font_md  or self._load_font(11)
+        font_lg  = self._font_lg  or self._load_font(14)
 
         mode        = state_snapshot.get("mode", MODE_PASSIVE)
         net_count   = state_snapshot.get("network_count", 0)
@@ -187,6 +196,14 @@ class DisplayManager:
 
         return canvas
 
+    def request_refresh(self):
+        """
+        Signal the display thread to refresh on its next wake-up (non-blocking).
+        Use this from GPIO callbacks instead of calling refresh() directly to
+        avoid blocking the callback context during SPI I/O (1–3 s on e-ink).
+        """
+        self._refresh_requested.set()
+
     def refresh(self, force: bool = False):
         """Push the current state to the e-ink panel."""
         with self._lock:
@@ -213,13 +230,16 @@ class DisplayManager:
     # ── Thread lifecycle ──────────────────────────────────────────────────────
 
     def _run(self):
-        """Background loop: refresh display on interval or state change."""
-        self.refresh(force=True)
+        """Background loop: refresh on interval or when request_refresh() is called."""
+        self.refresh()
         while not self._stop_event.is_set():
-            elapsed = time.monotonic() - self._last_refresh
-            if elapsed >= DISPLAY_REFRESH_INTERVAL:
-                self.refresh()
-            self._stop_event.wait(timeout=5)   # check every 5 s
+            # Block until a button signals request_refresh() or the interval fires.
+            # This replaces the old 5 s polling loop — no unnecessary wake-ups.
+            self._refresh_requested.wait(timeout=DISPLAY_REFRESH_INTERVAL)
+            if self._stop_event.is_set():
+                break
+            self._refresh_requested.clear()
+            self.refresh()
 
     def start(self):
         """Start the display refresh thread."""

@@ -102,6 +102,7 @@ class GhostPi:
 
         self._flask_thread: threading.Thread | None = None
         self._running = True
+        self._stop_event = threading.Event()
 
     # ── Flask thread ──────────────────────────────────────────────────────────
 
@@ -127,6 +128,7 @@ class GhostPi:
     def _handle_signal(self, signum, _frame):
         log.info("Signal %d received – shutting down", signum)
         self._running = False
+        self._stop_event.set()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -158,17 +160,26 @@ class GhostPi:
         self.start()
         try:
             while self._running:
-                time.sleep(1)
-                self._watchdog()
+                # Wake every 30 s for watchdog, or immediately on signal
+                self._stop_event.wait(timeout=30)
+                self._stop_event.clear()
+                if self._running:
+                    self._watchdog()
         except KeyboardInterrupt:
             pass
         finally:
             self.stop()
 
     def _watchdog(self):
-        """Log periodic heartbeat so we can verify threads are alive."""
-        # Could be extended to restart dead threads
-        pass
+        """Log a warning if any critical thread has died unexpectedly."""
+        watched = {
+            "capture": getattr(self._capture, "_thread", None),
+            "display": self._display._thread,
+            "webui":   self._flask_thread,
+        }
+        for name, thread in watched.items():
+            if thread and not thread.is_alive():
+                log.error("WATCHDOG: thread '%s' has died", name)
 
     def stop(self):
         """Gracefully shut down all components."""

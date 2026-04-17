@@ -175,12 +175,10 @@ def _parse_power(pwr: str) -> int:
 
 
 def _safe_state_copy(state: dict) -> dict:
-    """Return a JSON-serialisable copy of the state dict."""
-    copy = {}
-    for k, v in state.items():
-        try:
-            json.dumps(v)
-            copy[k] = v
-        except (TypeError, ValueError):
-            copy[k] = str(v)
-    return copy
+    """Return a JSON-serialisable deep copy of the state dict."""
+    try:
+        return json.loads(json.dumps(state))
+    except (TypeError, ValueError):
+        # Fallback: stringify anything that won't serialise
+        return {k: v if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+                else str(v) for k, v in state.items()}
