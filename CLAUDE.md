@@ -183,3 +183,53 @@ network access on first boot.
 - Installation section restructured: Method A (prepare-sd.sh, primary) and
   Method B (install.sh, fallback)
 - File layout table updated with new scripts
+
+---
+
+### 2026-04-17 (session 2)
+
+**Performance and reliability fixes for Pi Zero WH**
+
+All five application files were audited for blocking calls, CPU waste, and
+thread-safety issues on the constrained single-core ARMv6 hardware.
+
+**`ghostpi/capture.py`**
+- `_count_handshakes()` was blocking the capture loop every 30s — spawned one
+  `aircrack-ng` subprocess per PCAP (10s timeout each), growing worse over time.
+  Now runs in a background daemon thread, rate-limited to once per 2 minutes
+  (`_HS_CHECK_INTERVAL = 120`). Cached result in `self._hs_count`.
+- Probe accumulation changed from `list[-MAX_PROBES_PER_STA:]` (allocates a new
+  list on every parse cycle) to `deque(maxlen=MAX_PROBES_PER_STA)` — bounded by
+  construction with zero per-cycle allocation.
+- airodump-ng unexpected-restart path now has exponential backoff: 5s × restart
+  count, capped at 60s. Prevents CPU thrash if the wireless card keeps crashing.
+- `_publish_state()`: probes converted from deques to plain lists before writing
+  to shared state so Flask can JSON-serialise them.
+
+**`ghostpi/display.py`**
+- Fonts (`self._font_sm`, `_font_md`, `_font_lg`) loaded once in `__init__`
+  instead of 3× `ImageFont.truetype()` calls on every render.
+- New `request_refresh()` method sets a `threading.Event` and returns
+  immediately. GPIO callbacks now call this instead of `refresh()` directly,
+  which was blocking the callback context for 1–3s during SPI e-ink I/O and
+  causing button presses to be dropped during refresh.
+- `_run()` loop replaced 5s polling (`_stop_event.wait(timeout=5)`) with a
+  single `_refresh_requested.wait(timeout=DISPLAY_REFRESH_INTERVAL)` — wakes
+  only on button press event or interval expiry, not every 5s.
+
+**`ghostpi/buttons.py`**
+- All 8 direct `self._display.refresh(force=True)` calls replaced with
+  `self._display.request_refresh()` to unblock GPIO callback context.
+
+**`ghostpi/main.py`**
+- Main loop changed from `time.sleep(1)` (woke 60× per minute) to
+  `self._stop_event.wait(timeout=30)` — wakes on signal or every 30s.
+- `_handle_signal()` now sets `_stop_event` for immediate shutdown response.
+- `_watchdog()` implemented: checks each critical thread (`capture`, `display`,
+  `webui`) with `thread.is_alive()` and logs an error if one has died.
+
+**`ghostpi/webui/app.py`**
+- `_safe_state_copy()` was calling `json.dumps()` per-key on every `/api/data`
+  poll. Replaced with a single `json.loads(json.dumps(state))` pass which also
+  produces a proper deep copy, preventing Flask threads from seeing shared
+  nested dict objects.
