@@ -6,7 +6,7 @@
 # written, and systemd services are enabled by symlink.  The Pi just boots and
 # runs — no SSH install step required.
 #
-# Target OS: Raspberry Pi OS Lite 32-bit, Bookworm/Trixie (2024-10 / 4-13 release)
+# Target OS: Raspberry Pi OS Lite 32-bit, Trixie (2026-04-13 release)
 # Target hardware: Raspberry Pi Zero WH
 #
 # Usage (run as root on your Linux machine with the SD card inserted):
@@ -112,16 +112,30 @@ ok "QEMU ARM emulation available."
 banner "SD card"
 
 if [[ -n "$DEVICE" ]]; then
-    BOOT_DIR="$(mktemp -d /tmp/ghostpi-boot-XXXX)"
-    ROOT_DIR="$(mktemp -d /tmp/ghostpi-root-XXXX)"
+    # Desktop Linux auto-mounts SD partitions (bootfs/rootfs) when inserted.
+    # Detect existing mounts and reuse them instead of failing with "already mounted".
+    EXISTING_BOOT="$(findmnt -n -o TARGET "${DEVICE}1" 2>/dev/null || true)"
+    EXISTING_ROOT="$(findmnt -n -o TARGET "${DEVICE}2" 2>/dev/null || true)"
 
-    info "Mounting ${DEVICE}1 (boot) → $BOOT_DIR"
-    mount "${DEVICE}1" "$BOOT_DIR" || die "Failed to mount ${DEVICE}1"
-    MOUNTED_BOOT=true
+    if [[ -n "$EXISTING_BOOT" ]]; then
+        info "${DEVICE}1 already mounted at $EXISTING_BOOT — reusing."
+        BOOT_DIR="$EXISTING_BOOT"
+    else
+        BOOT_DIR="$(mktemp -d /tmp/ghostpi-boot-XXXX)"
+        info "Mounting ${DEVICE}1 (bootfs) → $BOOT_DIR"
+        mount "${DEVICE}1" "$BOOT_DIR" || die "Failed to mount ${DEVICE}1"
+        MOUNTED_BOOT=true
+    fi
 
-    info "Mounting ${DEVICE}2 (root) → $ROOT_DIR"
-    mount "${DEVICE}2" "$ROOT_DIR" || die "Failed to mount ${DEVICE}2"
-    MOUNTED_ROOT=true
+    if [[ -n "$EXISTING_ROOT" ]]; then
+        info "${DEVICE}2 already mounted at $EXISTING_ROOT — reusing."
+        ROOT_DIR="$EXISTING_ROOT"
+    else
+        ROOT_DIR="$(mktemp -d /tmp/ghostpi-root-XXXX)"
+        info "Mounting ${DEVICE}2 (rootfs) → $ROOT_DIR"
+        mount "${DEVICE}2" "$ROOT_DIR" || die "Failed to mount ${DEVICE}2"
+        MOUNTED_ROOT=true
+    fi
 fi
 
 # Sanity-check the mounted partitions
@@ -182,7 +196,7 @@ mount --bind /sys     "$ROOT_DIR/sys"
 mount --bind /dev     "$ROOT_DIR/dev"
 mount --bind /dev/pts "$ROOT_DIR/dev/pts"
 
-# Give the chroot DNS access.  On Bookworm, /etc/resolv.conf is a symlink to
+# Give the chroot DNS access.  On Trixie/Bookworm, /etc/resolv.conf is a symlink to
 # a runtime path that doesn't exist in the offline rootfs — replace it.
 if [[ -L "$ROOT_DIR/etc/resolv.conf" ]]; then
     RESOLV_SYMLINK_TARGET="$(readlink "$ROOT_DIR/etc/resolv.conf")"

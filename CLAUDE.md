@@ -137,9 +137,9 @@ sudo airmon-ng start wlan0          # manually start monitor mode
   renders 16px low without it.  Do not "fix" this.
 - `g_ether` module must load at boot via cmdline.txt (`modules-load=dwc2,g_ether`).
   If usb0 is missing after boot, this line is likely absent from cmdline.txt.
-- On Bookworm, boot files are at `/boot/firmware/` on the Pi, but the first SD
+- On Trixie, boot files are at `/boot/firmware/` on the Pi, but the first SD
   partition root when mounted on a Linux host — prepare-sd.sh handles both.
-- `pip3 install --break-system-packages` is intentional on Bookworm for the
+- `pip3 install --break-system-packages` is intentional on Trixie for the
   adafruit libraries.  The Pi is a dedicated appliance, not a shared system.
 
 ---

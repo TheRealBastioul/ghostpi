@@ -65,7 +65,7 @@ the Pi Zero's slow single core.
 
 #### 1. Flash the OS
 
-Flash **Raspberry Pi OS Lite 32-bit** (Bookworm / 2024-10 / 4-13 release)
+Flash **Raspberry Pi OS Lite 32-bit** (Trixie / 2026-04-13 release)
 to a microSD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
 
 In Imager's **advanced options** (gear icon):
