@@ -57,56 +57,91 @@ No breadboard, no jumper wires.
 ### Method A — SD card prep on your Linux machine (recommended)
 
 Everything is installed from your Linux machine directly onto the SD card.
-The Pi just boots and runs — no SSH install step, no waiting for `apt` on
-the Pi Zero's slow single core.
+The Pi just boots and runs — no SSH required, no waiting for `apt` on the
+Pi Zero's slow single core.
 
-**Requirements:** Debian/Ubuntu Linux host with root access.
-`qemu-user-static` and `binfmt-support` are installed automatically.
+**Requirements:** A Linux machine running Ubuntu or Debian with internet access.
+You do **not** need anything else pre-installed — the script handles it.
 
-#### 1. Flash the OS
+---
 
-Flash **Raspberry Pi OS Lite 32-bit** (Trixie / 2026-04-13 release)
-to a microSD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
+#### Step 1 — Flash the OS
 
-In Imager's **advanced options** (gear icon):
-- Set hostname, username (`admin`), and password
-- Optionally enable SSH if you want remote access later
+1. Download and install [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your Linux machine.
+2. Open Imager, click **Choose OS** → **Raspberry Pi OS (other)** →
+   **Raspberry Pi OS Lite (32-bit)** (Trixie / 2026-04-13 release).
+3. Click **Choose Storage** and select your microSD card.
+4. Click the **gear icon** (advanced options) and set:
+   - Hostname: anything you like (e.g. `ghostpi`)
+   - Username: `admin`  ← **must match this exactly**
+   - Password: your choice
+   - Enable SSH: yes (lets you log in later if needed)
+5. Click **Write** and wait for it to finish.
+6. **Do not eject the SD card yet.**
 
-Do **not** eject the SD card yet.
+---
 
-#### 2. Run the host-side preparation script
+#### Step 2 — Find your SD card device name
+
+Open a terminal and run:
 
 ```bash
-# Identify your SD card device — check dmesg or lsblk after inserting
 lsblk
-
-# Run as root (replace /dev/sdX with your actual device)
-sudo bash setup/prepare-sd.sh --device /dev/sdX
 ```
 
-If you have already mounted the partitions yourself:
+Look for your SD card in the output. It will look something like this:
+
+```
+sdb      8:16   1  29.7G  0 disk
+├─sdb1   8:17   1   512M  0 part  /run/media/yourname/bootfs
+└─sdb2   8:18   1  29.2G  0 part  /run/media/yourname/rootfs
+```
+
+Your SD card device is the disk entry — in this example **`/dev/sdb`**.
+The two partitions (`sdb1`, `sdb2`) are the boot and root filesystems.
+
+> **How to tell it's the right device:** it should be roughly the size of
+> your SD card, have two partitions, and one of them will be labelled
+> `bootfs` or `rootfs`. **Do not pick your main system drive.**
+
+---
+
+#### Step 3 — Run the preparation script
+
+Clone this repo if you haven't already:
 
 ```bash
-sudo bash setup/prepare-sd.sh --boot /mnt/sdboot --root /mnt/sdroot
+git clone https://github.com/TheRealBastioul/ghostpi.git
+cd ghostpi
 ```
 
-This script will:
-1. Install `qemu-user-static` on your host (for ARM emulation)
-2. Download and install all apt packages into the SD card rootfs via ARM chroot
-3. Install Python packages (`adafruit-circuitpython-epd`, `ssd1680`)
-4. Copy the GhostPi application to `/home/admin/ghostpi`
-5. Write network configs (dhcpcd static IP, dnsmasq DHCP)
-6. Install and enable the `ghostpi` and `dnsmasq` systemd services
-7. Write `config.txt` and `cmdline.txt` boot settings
-
-#### 3. Eject and boot
+Then run the script as root, using the device name you found above:
 
 ```bash
-sudo eject /dev/sdX
+# Replace /dev/sdb with YOUR device name from Step 2
+sudo bash setup/prepare-sd.sh --device /dev/sdb
 ```
 
-Insert the SD card into the Pi Zero WH and power on.
-GhostPi starts automatically — no further setup required.
+The script will automatically detect whether your system has already
+auto-mounted the SD card partitions (Linux desktops often do this on
+insert) and work with them either way — you don't need to unmount anything.
+
+This will take **5–15 minutes** depending on your internet speed. You will
+see progress output as it downloads packages and installs everything.
+
+---
+
+#### Step 4 — Eject and boot
+
+Once the script finishes, safely eject the SD card:
+
+```bash
+# Replace /dev/sdb with your device name
+sudo eject /dev/sdb
+```
+
+Insert the SD card into your **Raspberry Pi Zero WH** and plug in power.
+GhostPi will start automatically on first boot — nothing else to do.
 
 ---
 
