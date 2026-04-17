@@ -233,3 +233,35 @@ thread-safety issues on the constrained single-core ARMv6 hardware.
   poll. Replaced with a single `json.loads(json.dumps(state))` pass which also
   produces a proper deep copy, preventing Flask threads from seeing shared
   nested dict objects.
+
+---
+
+### 2026-04-17 (session 3)
+
+**prepare-sd.sh: Kali compatibility, qemu-user-binfmt, minimum packages**
+
+**`setup/prepare-sd.sh`**
+- `qemu-user-static` is deprecated (2026). Replaced with `qemu-user-binfmt`
+  as the primary method. Key difference: `qemu-user-binfmt` registers ARM
+  binfmt entries using the kernel `F` (fix-binary) flag, meaning the host
+  kernel holds a reference to the QEMU binary — no binary copy into the
+  chroot needed. Chroot calls simplified from
+  `chroot DIR /usr/bin/qemu-arm-static /bin/bash` to `chroot DIR /bin/bash`.
+- `qemu-user-static` kept as an automatic fallback for older Ubuntu/Debian.
+- `QEMU_METHOD` variable (`"binfmt"` or `"static"`) controls binary copy,
+  chroot invocation, and cleanup throughout the script.
+- `binfmt_misc` kernel module loaded/mounted automatically if not present.
+- Resilient per-package apt install: `install_pkg()` tries primary name then
+  ordered fallbacks, logs failures to a temp file, never aborts the script.
+  `install_optional()` for nice-to-have packages that skip silently if absent.
+- `python3-rpi.gpio` fallback chain: `→ python3-rpi-lgpio → python3-lgpio`
+  (package was renamed in newer Raspberry Pi OS / Trixie releases).
+- Moved `python3-dev`, `wireless-tools`, `net-tools` to optional — `iw` and
+  `iproute2` (base package) cover modern kernels; dev headers only needed if
+  pip needs to compile C extensions (unlikely with Trixie pre-built wheels).
+- pip section wrapped in `set +e / set -e` — failure is reported in the
+  final summary rather than killing the script mid-install.
+- Final summary shows a warnings block listing any packages that failed,
+  with exact commands to fix them on the Pi after first boot.
+- README Method A instructions rewritten for new users: step-by-step format,
+  `lsblk` output explained, auto-mount behaviour clarified, username warning.
