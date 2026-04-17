@@ -3,6 +3,12 @@
 This file is read automatically by Claude Code at the start of every session.
 Use it to get up to speed without re-exploring the codebase from scratch.
 
+> **Standing instruction:** Before ending any session, update the Changelog
+> section at the bottom of this file with a dated `### YYYY-MM-DD (session N)`
+> entry covering every file changed, what was wrong, and what was done — then
+> commit and push it along with the rest of the changes.  Do this automatically
+> without being asked.
+
 ---
 
 ## What this project is
