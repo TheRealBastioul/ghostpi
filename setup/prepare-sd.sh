@@ -516,38 +516,57 @@ else
     warn "  On the Pi: sudo systemctl enable dnsmasq"
 fi
 
-# SSH + user credentials for Pi OS Trixie
+# User creation + SSH setup
 #
-# Pi OS Trixie uses two first-boot mechanisms (both must be set):
-#
-#  1. /boot/ssh  — Pi OS sshswitch.service sees this file and runs
-#                  "systemctl enable --now ssh", then deletes the flag.
-#                  No manual systemd symlink is needed or correct here.
-#
-#  2. /boot/custom.toml — Pi OS init_config reads this on first boot to
-#                  create the user account and configure SSH password auth.
-#                  This is the official Trixie replacement for the older
-#                  userconf.txt mechanism.
+# We create the user directly in the QEMU ARM chroot (useradd + chpasswd) rather
+# than relying on Pi OS first-boot mechanisms (custom.toml / sshswitch.service).
+# First-boot services run only once and are unreliable for repair scenarios.
+# Direct chroot setup is permanent and survives repair re-runs.
 
-# SSH boot flag
-touch "$BOOT_DIR/ssh"
-ok "SSH boot flag set (sshswitch.service will enable ssh on first boot)."
+banner "User and SSH setup"
 
-# custom.toml — user + SSH config (Pi OS Trixie first-boot mechanism)
-cat > "$BOOT_DIR/custom.toml" << EOF
-[system]
-hostname = "ghostpi"
+# Create user and set password inside the ARM chroot
+"${CHROOT[@]}" << CHROOTEOF
+set -e
+# Create user if not already present
+if ! id "${PI_USER}" &>/dev/null 2>&1; then
+    useradd -m -s /bin/bash -G sudo,adm,dialout,cdrom,audio,video,plugdev,games,users,input,render,netdev "${PI_USER}" 2>/dev/null || \
+    useradd -m -s /bin/bash "${PI_USER}"
+    usermod -aG sudo "${PI_USER}" 2>/dev/null || true
+fi
+echo "${PI_USER}:ghostpi" | chpasswd
+# Set hostname
+echo "ghostpi" > /etc/hostname
+# Allow password authentication in sshd
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/ghostpi.conf << 'SSHCONF'
+PasswordAuthentication yes
+PermitRootLogin no
+SSHCONF
+CHROOTEOF
+ok "User '${PI_USER}' created (password: ghostpi)."
 
-[user]
-name = "${PI_USER}"
-password = "ghostpi"
-password_encrypted = false
+# Enable SSH by creating the systemd symlink directly — no boot flag needed.
+# This is equivalent to 'systemctl enable ssh' and survives re-flashing.
+SSH_UNIT=""
+for candidate in \
+    "$ROOT_DIR/lib/systemd/system/ssh.service" \
+    "$ROOT_DIR/usr/lib/systemd/system/ssh.service" \
+    "$ROOT_DIR/lib/systemd/system/sshd.service" \
+    "$ROOT_DIR/usr/lib/systemd/system/sshd.service"
+do
+    [[ -f "$candidate" ]] && { SSH_UNIT="${candidate#$ROOT_DIR}"; break; }
+done
 
-[ssh]
-enabled = true
-password_authentication = true
-EOF
-ok "custom.toml written: user=${PI_USER} password=ghostpi hostname=ghostpi."
+if [[ -n "$SSH_UNIT" ]]; then
+    ln -sf "$SSH_UNIT" "$WANTS_DIR/$(basename "$SSH_UNIT")"
+    ok "SSH service enabled (symlink → $SSH_UNIT)."
+else
+    # Fallback: set the boot flag so sshswitch.service enables it on first boot
+    touch "$BOOT_DIR/ssh"
+    warn "SSH unit not found in rootfs — boot flag set as fallback."
+fi
+
 warn "Change the default password after first login: passwd"
 
 # ─── Boot partition configuration ─────────────────────────────────────────────

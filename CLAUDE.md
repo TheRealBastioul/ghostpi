@@ -652,3 +652,53 @@ Root causes investigated after display showing nothing on boot:
   individual library imports (board, busio, digitalio, adafruit_epd, PIL),
   per-pin accessibility via `digitalio.DigitalInOut`, and a full
   `Adafruit_SSD1680` init attempt with traceback on failure.
+
+---
+
+### 2026-04-18 (session 11)
+
+**Fix e-ink display (CS pin, image mode, init sequence) + fix SSH reliability**
+
+**`ghostpi/display.py`** and **`ghostpi/splash.py`**
+Three bugs found by comparing against the official Adafruit working example:
+
+1. **CS pin**: `board.CE0` → `board.D8`. `CE0` is a hardware SPI chip-select
+   alias that conflicts with SPI bus control when used via `digitalio`.
+   Working Adafruit code always uses `board.D8` (GPIO8) directly.
+
+2. **Image mode**: `Image.new("1", ...)` → `Image.new("RGB", ...)`. The EPD
+   `image()` method accepts `"RGB"` or `"L"` — the 1-bit mode caused a silent
+   `ValueError` in `refresh()` that was swallowed by `except Exception`, so
+   nothing ever rendered. All draw `fill` values updated: 0→`(0,0,0)` (BLACK),
+   1→`(255,255,255)` (WHITE). Image passed directly without `.convert("L")`.
+
+3. **Missing initial fill+display**: Added `epd.fill(Adafruit_EPD.WHITE)` +
+   `epd.display()` immediately after `epd.rotation = 1`. The panel must be put
+   into a known blank state before the first image write; skipping this step
+   leaves the panel in an undefined state from power-on.
+   Added `from adafruit_epd.epd import Adafruit_EPD` import for the constant.
+
+**`tools/preview-display.py`**
+- Updated to match `display.py`: `"RGB"` mode, RGB fill tuples. Verified
+  working: `python3 tools/preview-display.py --demo --out /tmp/preview.png`.
+
+**`setup/prepare-sd.sh`**
+- Replaced `custom.toml` first-boot user creation with direct `useradd` +
+  `chpasswd` in the QEMU ARM chroot. `custom.toml` only runs once and is
+  unreliable for re-runs or repair. Chroot user creation is permanent and
+  idempotent (checks `id` before `useradd`).
+- Sets hostname to `ghostpi` in the chroot `/etc/hostname`.
+- Writes `/etc/ssh/sshd_config.d/ghostpi.conf` with `PasswordAuthentication yes`
+  inside the chroot.
+- SSH enablement now uses a direct systemd symlink in `multi-user.target.wants/`
+  rather than the boot flag + `sshswitch.service` chain. Falls back to boot
+  flag if the SSH unit file isn't found.
+
+**`setup/sdcard-repair.sh`**
+- Same reliability fix: replaced `custom.toml` approach with direct rootfs
+  edits to `/etc/passwd`, `/etc/shadow` (using `openssl passwd -6` on the
+  host), and `/etc/group`.
+- Writes `/etc/ssh/sshd_config.d/ghostpi.conf` to rootfs.
+- Enables SSH via systemd symlink in rootfs `multi-user.target.wants/`.
+- Status check updated to look for user in rootfs passwd and SSH systemd
+  symlink instead of boot flag + custom.toml.

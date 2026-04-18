@@ -28,6 +28,7 @@ try:
     import board
     import busio
     import digitalio
+    from adafruit_epd.epd import Adafruit_EPD
     from adafruit_epd.ssd1680b import Adafruit_SSD1680B
     from PIL import Image, ImageDraw, ImageFont
 except Exception as exc:
@@ -44,7 +45,10 @@ def load_font(size):
 
 def draw_splash() -> Image.Image:
     """Render the boot splash image."""
-    canvas = Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT), 1)
+    BLACK = (0, 0, 0)
+    WHITE = (255, 255, 255)
+
+    canvas = Image.new("RGB", (DISPLAY_WIDTH, DISPLAY_HEIGHT), WHITE)
     draw   = ImageDraw.Draw(canvas)
 
     font_lg = load_font(14)
@@ -52,29 +56,29 @@ def draw_splash() -> Image.Image:
     font_sm = load_font(9)
 
     # ── Inverted header bar ───────────────────────────────────────────────
-    draw.rectangle([(0, 0), (DISPLAY_WIDTH - 1, 13)], fill=0)
-    draw.text((4, 1),                   "GhostPi",  font=font_lg, fill=1)
-    draw.text((DISPLAY_WIDTH - 58, 3),  "BOOTING",  font=font_sm, fill=1)
+    draw.rectangle([(0, 0), (DISPLAY_WIDTH - 1, 13)], fill=BLACK)
+    draw.text((4, 1),                   "GhostPi",  font=font_lg, fill=WHITE)
+    draw.text((DISPLAY_WIDTH - 58, 3),  "BOOTING",  font=font_sm, fill=WHITE)
 
     # ── Separator ─────────────────────────────────────────────────────────
-    draw.line([(0, 14), (DISPLAY_WIDTH - 1, 14)], fill=0)
+    draw.line([(0, 14), (DISPLAY_WIDTH - 1, 14)], fill=BLACK)
 
     # ── Status body ───────────────────────────────────────────────────────
-    draw.text((4, 20), "Configuring USB gadget...",  font=font_sm, fill=0)
-    draw.text((4, 32), "Services loading.",           font=font_sm, fill=0)
+    draw.text((4, 20), "Configuring USB gadget...",  font=font_sm, fill=BLACK)
+    draw.text((4, 32), "Services loading.",           font=font_sm, fill=BLACK)
 
     # ── Divider ───────────────────────────────────────────────────────────
-    draw.line([(0, 46), (DISPLAY_WIDTH - 1, 46)], fill=0)
+    draw.line([(0, 46), (DISPLAY_WIDTH - 1, 46)], fill=BLACK)
 
     # ── SSH access info ───────────────────────────────────────────────────
-    draw.text((4, 50), "SSH over USB gadget:",        font=font_sm, fill=0)
-    draw.text((4, 62), "ssh admin@192.168.7.1",       font=font_md, fill=0)
+    draw.text((4, 50), "SSH over USB gadget:",        font=font_sm, fill=BLACK)
+    draw.text((4, 62), "ssh admin@192.168.7.1",       font=font_md, fill=BLACK)
 
     # ── Bottom rule + action prompt ───────────────────────────────────────
-    draw.line([(0, 82), (DISPLAY_WIDTH - 1, 82)], fill=0)
-    draw.text((4, 86),  "Press ACTION (GPIO6)",       font=font_sm, fill=0)
-    draw.text((4, 98),  "to start Web UI",            font=font_sm, fill=0)
-    draw.text((4, 110), "once booted.",               font=font_sm, fill=0)
+    draw.line([(0, 82), (DISPLAY_WIDTH - 1, 82)], fill=BLACK)
+    draw.text((4, 86),  "Press ACTION (GPIO6)",       font=font_sm, fill=BLACK)
+    draw.text((4, 98),  "to start Web UI",            font=font_sm, fill=BLACK)
+    draw.text((4, 110), "once booted.",               font=font_sm, fill=BLACK)
 
     return canvas
 
@@ -82,7 +86,7 @@ def draw_splash() -> Image.Image:
 def main():
     try:
         spi  = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
-        cs   = digitalio.DigitalInOut(board.CE0)
+        cs   = digitalio.DigitalInOut(board.D8)
         dc   = digitalio.DigitalInOut(getattr(board, f"D{EPD_DC_PIN}"))
         rst  = digitalio.DigitalInOut(getattr(board, f"D{EPD_RST_PIN}"))
         busy = digitalio.DigitalInOut(getattr(board, f"D{EPD_BUSY_PIN}"))
@@ -93,8 +97,11 @@ def main():
             rst_pin=rst, busy_pin=busy,
         )
         epd.rotation = 1
+        # Clear to known state before drawing
+        epd.fill(Adafruit_EPD.WHITE)
+        epd.display()
 
-        epd.image(draw_splash().convert("L"))
+        epd.image(draw_splash())
         epd.display()
         print("ghostpi-splash: boot screen displayed", file=sys.stderr)
 

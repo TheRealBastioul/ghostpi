@@ -22,6 +22,7 @@ try:
     import board
     import busio
     import digitalio
+    from adafruit_epd.epd import Adafruit_EPD
     from adafruit_epd.ssd1680b import Adafruit_SSD1680B
     from PIL import Image, ImageDraw, ImageFont
     EPD_AVAILABLE = True
@@ -68,7 +69,7 @@ class DisplayManager:
         log.info("Initialising SSD1680B e-ink display (GDEY0213B74)...")
         try:
             spi  = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
-            cs   = digitalio.DigitalInOut(board.CE0)                         # GPIO 8, SPI0 CE0
+            cs   = digitalio.DigitalInOut(board.D8)                          # GPIO 8, SPI0 CE0
             dc   = digitalio.DigitalInOut(getattr(board, f"D{EPD_DC_PIN}"))  # GPIO 22
             rst  = digitalio.DigitalInOut(getattr(board, f"D{EPD_RST_PIN}")) # GPIO 27
             busy = digitalio.DigitalInOut(getattr(board, f"D{EPD_BUSY_PIN}")) # GPIO 17
@@ -79,6 +80,9 @@ class DisplayManager:
                 rst_pin=rst, busy_pin=busy,
             )
             self._epd.rotation = 1   # landscape: width=250, height=122
+            # Clear to known state before first draw (required by panel init sequence)
+            self._epd.fill(Adafruit_EPD.WHITE)
+            self._epd.display()
             log.info("E-ink display initialised (SSD1680B / GDEY0213B74)")
         except Exception as exc:
             log.error("Display hardware init failed: %s", exc)
@@ -88,7 +92,7 @@ class DisplayManager:
     # ── Canvas helpers ────────────────────────────────────────────────────────
 
     def _new_canvas(self):
-        return Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT), 1)
+        return Image.new("RGB", (DISPLAY_WIDTH, DISPLAY_HEIGHT), (255, 255, 255))
 
     def _load_font(self, size: int = 10):
         try:
@@ -128,19 +132,22 @@ class DisplayManager:
         status_msg      = state_snapshot.get("status_message", "Initialising...")
         last_essid      = state_snapshot.get("last_essid", "")
 
+        BLACK = (0, 0, 0)
+        WHITE = (255, 255, 255)
+
         # ── Header bar (inverted: black bg, white text) ───────────────────────
-        draw.rectangle([(0, (0)), (DISPLAY_WIDTH - 1, (13))], fill=0)
+        draw.rectangle([(0, 0), (DISPLAY_WIDTH - 1, 13)], fill=BLACK)
 
         mode_label = f"[{mode.upper()}]"
         if mode == MODE_ACTIVE and not ACTIVE_MODE_ENABLED:
             mode_label += " LOCKED"
-        draw.text((4, (1)), "GhostPi", font=font_lg, fill=1)
-        draw.text((DISPLAY_WIDTH - 80, (3)), mode_label, font=font_sm, fill=1)
+        draw.text((4, 1), "GhostPi", font=font_lg, fill=WHITE)
+        draw.text((DISPLAY_WIDTH - 80, 3), mode_label, font=font_sm, fill=WHITE)
         if capture_running:
-            draw.text((DISPLAY_WIDTH - 26, (3)), "REC", font=font_sm, fill=1)
+            draw.text((DISPLAY_WIDTH - 26, 3), "REC", font=font_sm, fill=WHITE)
 
         # ── Separator ─────────────────────────────────────────────────────────
-        draw.line([(0, (14)), (DISPLAY_WIDTH - 1, (14))], fill=0)
+        draw.line([(0, 14), (DISPLAY_WIDTH - 1, 14)], fill=BLACK)
 
         # ── Stats block ───────────────────────────────────────────────────────
         for label, value, row in (
@@ -149,26 +156,26 @@ class DisplayManager:
             ("Probes",     probe_count, 44),
             ("Handshakes", hs_count,    58),
         ):
-            draw.text((4, (row)), f"{label}:", font=font_sm, fill=0)
-            draw.text((90, (row)), str(value), font=font_med, fill=0)
+            draw.text((4, row), f"{label}:", font=font_sm, fill=BLACK)
+            draw.text((90, row), str(value), font=font_med, fill=BLACK)
 
         # ── Last-seen ESSID ───────────────────────────────────────────────────
         if last_essid:
-            draw.line([(0, (72)), (DISPLAY_WIDTH - 1, (72))], fill=0)
-            draw.text((4, (74)), f"Last: {last_essid[:28]}", font=font_sm, fill=0)
+            draw.line([(0, 72), (DISPLAY_WIDTH - 1, 72)], fill=BLACK)
+            draw.text((4, 74), f"Last: {last_essid[:28]}", font=font_sm, fill=BLACK)
 
         # ── Status message (respects \n, word-wraps each segment) ─────────────
-        draw.line([(0, (86)), (DISPLAY_WIDTH - 1, (86))], fill=0)
+        draw.line([(0, 86), (DISPLAY_WIDTH - 1, 86)], fill=BLACK)
         lines = []
         for segment in status_msg.split("\n"):
             wrapped = textwrap.wrap(segment, width=35)
             lines.extend(wrapped if wrapped else [segment])
         for i, line in enumerate(lines[:3]):
-            draw.text((4, (89 + i * 10)), line, font=font_sm, fill=0)
+            draw.text((4, 89 + i * 10), line, font=font_sm, fill=BLACK)
 
         # ── Timestamp (bottom-right) ──────────────────────────────────────────
-        draw.text((DISPLAY_WIDTH - 32, (112)), time.strftime("%H:%M"),
-                  font=font_sm, fill=0)
+        draw.text((DISPLAY_WIDTH - 32, 112), time.strftime("%H:%M"),
+                  font=font_sm, fill=BLACK)
 
         return canvas
 
@@ -191,7 +198,7 @@ class DisplayManager:
             if self._epd is None:
                 return
 
-            self._epd.image(image.convert("L"))
+            self._epd.image(image)
             self._epd.display()
             self._last_refresh = time.monotonic()
             log.debug("Display refreshed")

@@ -53,10 +53,13 @@ def load_font(size: int):
 
 def render(state: dict) -> Image.Image:
     """
-    Render a 250×122 mode-'1' PIL image exactly as DisplayManager._render() does.
-    Returns the raw 1-bit canvas.
+    Render a 250×122 RGB PIL image exactly as DisplayManager._render() does.
+    Returns the RGB canvas.
     """
-    canvas = Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT), 1)
+    BLACK = (0, 0, 0)
+    WHITE = (255, 255, 255)
+
+    canvas = Image.new("RGB", (DISPLAY_WIDTH, DISPLAY_HEIGHT), WHITE)
     draw   = ImageDraw.Draw(canvas)
 
     font_sm  = load_font(9)
@@ -73,15 +76,15 @@ def render(state: dict) -> Image.Image:
     last_essid      = state.get("last_essid", "")
 
     # ── Header bar ────────────────────────────────────────────────────────────
-    draw.rectangle([(0, 0), (DISPLAY_WIDTH - 1, 13)], fill=0)
+    draw.rectangle([(0, 0), (DISPLAY_WIDTH - 1, 13)], fill=BLACK)
     mode_label = f"[{mode.upper()}]"
-    draw.text((4, 1),                    "GhostPi",  font=font_lg, fill=1)
-    draw.text((DISPLAY_WIDTH - 80, 3),   mode_label, font=font_sm, fill=1)
+    draw.text((4, 1),                    "GhostPi",  font=font_lg, fill=WHITE)
+    draw.text((DISPLAY_WIDTH - 80, 3),   mode_label, font=font_sm, fill=WHITE)
     if capture_running:
-        draw.text((DISPLAY_WIDTH - 26, 3), "REC",   font=font_sm, fill=1)
+        draw.text((DISPLAY_WIDTH - 26, 3), "REC",   font=font_sm, fill=WHITE)
 
     # ── Separator ─────────────────────────────────────────────────────────────
-    draw.line([(0, 14), (DISPLAY_WIDTH - 1, 14)], fill=0)
+    draw.line([(0, 14), (DISPLAY_WIDTH - 1, 14)], fill=BLACK)
 
     # ── Stats block ───────────────────────────────────────────────────────────
     for label, value, row in (
@@ -90,25 +93,25 @@ def render(state: dict) -> Image.Image:
         ("Probes",     probe_count, 44),
         ("Handshakes", hs_count,    58),
     ):
-        draw.text((4,  row), f"{label}:", font=font_sm, fill=0)
-        draw.text((90, row), str(value),  font=font_med, fill=0)
+        draw.text((4,  row), f"{label}:", font=font_sm, fill=BLACK)
+        draw.text((90, row), str(value),  font=font_med, fill=BLACK)
 
     # ── Last-seen ESSID ───────────────────────────────────────────────────────
     if last_essid:
-        draw.line([(0, 72), (DISPLAY_WIDTH - 1, 72)], fill=0)
-        draw.text((4, 74), f"Last: {last_essid[:28]}", font=font_sm, fill=0)
+        draw.line([(0, 72), (DISPLAY_WIDTH - 1, 72)], fill=BLACK)
+        draw.text((4, 74), f"Last: {last_essid[:28]}", font=font_sm, fill=BLACK)
 
     # ── Status message ────────────────────────────────────────────────────────
-    draw.line([(0, 86), (DISPLAY_WIDTH - 1, 86)], fill=0)
+    draw.line([(0, 86), (DISPLAY_WIDTH - 1, 86)], fill=BLACK)
     lines = []
     for segment in status_msg.split("\n"):
         wrapped = textwrap.wrap(segment, width=35)
         lines.extend(wrapped if wrapped else [segment])
     for i, line in enumerate(lines[:3]):
-        draw.text((4, 89 + i * 10), line, font=font_sm, fill=0)
+        draw.text((4, 89 + i * 10), line, font=font_sm, fill=BLACK)
 
     # ── Timestamp ─────────────────────────────────────────────────────────────
-    draw.text((DISPLAY_WIDTH - 32, 112), time.strftime("%H:%M"), font=font_sm, fill=0)
+    draw.text((DISPLAY_WIDTH - 32, 112), time.strftime("%H:%M"), font=font_sm, fill=BLACK)
 
     return canvas
 

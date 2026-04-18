@@ -14,13 +14,13 @@
 #   sudo bash setup/sdcard-repair.sh --status            # read-only diagnostics only
 #
 # What it fixes (all idempotent — safe to run multiple times):
-#   1. SSH   — touches /boot/ssh, enables sshd.service via systemd symlink,
-#              writes userconf.txt with default credentials (admin / ghostpi)
-#   2. USB OTG — adds modules-load=dwc2,g_ether to cmdline.txt
-#   3. SPI   — adds dtparam=spi=on + dtoverlay=dwc2 to config.txt
-#   4. usb0 IP — writes static IP (192.168.7.1) block to dhcpcd.conf
-#   5. dnsmasq — writes DHCP config for usb0 subnet
-#   6. GhostPi files — copies app files from this repo if missing
+#   1. User  — creates user in rootfs passwd/shadow with password ghostpi
+#   2. SSH   — enables ssh.service via systemd symlink; writes sshd_config.d/ghostpi.conf
+#   3. USB OTG — adds modules-load=dwc2,g_ether to cmdline.txt
+#   4. SPI   — adds dtparam=spi=on + dtoverlay=dwc2 to config.txt
+#   5. usb0 IP — writes static IP (192.168.7.1) block to dhcpcd.conf
+#   6. dnsmasq — writes DHCP config for usb0 subnet
+#   7. GhostPi files — copies app files from this repo if missing
 
 set -euo pipefail
 
@@ -105,18 +105,21 @@ echo ""
 # ─── Status checks ────────────────────────────────────────────────────────────
 banner "Status"
 
-# SSH boot flag (Pi OS Trixie: sshswitch.service enables ssh on first boot)
-if [[ -f "$BOOT_DIR/ssh" ]]; then
-    ok  "SSH boot flag present ($BOOT_DIR/ssh)"
+# User account in rootfs
+if grep -q "^${PI_USER}:" "$ROOT_DIR/etc/passwd" 2>/dev/null; then
+    ok  "User '${PI_USER}' present in rootfs"
 else
-    fail "SSH boot flag missing — sshswitch.service won't enable SSH"
+    fail "User '${PI_USER}' missing from rootfs passwd — repair will add it"
 fi
 
-# custom.toml (Pi OS Trixie: user + SSH config applied by init_config on first boot)
-if [[ -f "$BOOT_DIR/custom.toml" ]]; then
-    ok  "custom.toml present (first-boot user/SSH config)"
+# SSH service enabled
+if [[ -L "$ROOT_DIR/etc/systemd/system/multi-user.target.wants/ssh.service" ]] || \
+   [[ -L "$ROOT_DIR/etc/systemd/system/multi-user.target.wants/sshd.service" ]]; then
+    ok  "SSH service enabled (systemd symlink present)"
+elif [[ -f "$BOOT_DIR/ssh" ]]; then
+    ok  "SSH boot flag present (sshswitch.service will enable SSH on first boot)"
 else
-    fail "custom.toml missing — no user account will be created on first boot"
+    fail "SSH not enabled — neither systemd symlink nor boot flag found"
 fi
 
 # USB OTG
@@ -167,33 +170,74 @@ $STATUS_ONLY && { echo ""; echo "Status check complete (read-only)."; exit 0; }
 # ─── Repairs ──────────────────────────────────────────────────────────────────
 banner "Applying fixes"
 
-# ── 1. SSH boot flag ──────────────────────────────────────────────────────────
-# Pi OS Trixie: sshswitch.service sees this file and runs
-# "systemctl enable --now ssh", then deletes it. No symlink needed.
-if [[ ! -f "$BOOT_DIR/ssh" ]]; then
-    touch "$BOOT_DIR/ssh"
-    ok "SSH boot flag created"
+# ── 1. User account — write directly into rootfs passwd/shadow ───────────────
+# This is reliable across all Pi OS versions and survives re-runs.
+# custom.toml only works on first boot — not suitable for repair.
+
+PASSWD_FILE="$ROOT_DIR/etc/passwd"
+SHADOW_FILE="$ROOT_DIR/etc/shadow"
+
+if grep -q "^${PI_USER}:" "$PASSWD_FILE" 2>/dev/null; then
+    ok "User '${PI_USER}' already exists in rootfs"
 else
-    ok "SSH boot flag already present"
+    # Find a free UID ≥ 1000
+    NEXT_UID=1000
+    while grep -q ":${NEXT_UID}:" "$PASSWD_FILE" 2>/dev/null; do
+        (( NEXT_UID++ ))
+    done
+    # Create home directory
+    mkdir -p "$ROOT_DIR/home/${PI_USER}"
+    # Add passwd entry (uid=gid=NEXT_UID, home=/home/PI_USER, shell=/bin/bash)
+    echo "${PI_USER}:x:${NEXT_UID}:${NEXT_UID}::/home/${PI_USER}:/bin/bash" >> "$PASSWD_FILE"
+    # Add group entry
+    [[ -f "$ROOT_DIR/etc/group" ]] && \
+        echo "${PI_USER}:x:${NEXT_UID}:" >> "$ROOT_DIR/etc/group"
+    # Add sudo group membership
+    sed -i "s/^sudo:.*/&,${PI_USER}/" "$ROOT_DIR/etc/group" 2>/dev/null || true
+    ok "User '${PI_USER}' added to rootfs (UID ${NEXT_UID})"
 fi
 
-# ── 2. custom.toml — user + SSH config (Pi OS Trixie first-boot mechanism) ───
-# init_config reads this on first boot: creates user account, enables SSH
-# with password auth. This replaces the old userconf.txt approach.
-cat > "$BOOT_DIR/custom.toml" << EOF
-[system]
-hostname = "ghostpi"
+# Set/reset password in shadow (works whether user existed or was just created)
+if command -v openssl &>/dev/null; then
+    HASHED_PW="$(openssl passwd -6 'ghostpi')"
+    if grep -q "^${PI_USER}:" "$SHADOW_FILE" 2>/dev/null; then
+        # Update existing shadow entry
+        sed -i "s|^${PI_USER}:[^:]*:|${PI_USER}:${HASHED_PW}:|" "$SHADOW_FILE"
+    else
+        echo "${PI_USER}:${HASHED_PW}:19900:0:99999:7:::" >> "$SHADOW_FILE"
+    fi
+    ok "Password set for '${PI_USER}' (ghostpi)"
+else
+    warn "openssl not found — cannot set password. Set it manually via: passwd ${PI_USER}"
+fi
 
-[user]
-name = "${PI_USER}"
-password = "ghostpi"
-password_encrypted = false
+# Allow SSH password auth
+mkdir -p "$ROOT_DIR/etc/ssh/sshd_config.d"
+cat > "$ROOT_DIR/etc/ssh/sshd_config.d/ghostpi.conf" << 'SSHCONF'
+PasswordAuthentication yes
+PermitRootLogin no
+SSHCONF
+ok "sshd: password authentication enabled"
 
-[ssh]
-enabled = true
-password_authentication = true
-EOF
-ok "custom.toml written: user=${PI_USER} password=ghostpi (CHANGE AFTER FIRST LOGIN)"
+# ── 2. Enable SSH via systemd symlink (works before first boot) ───────────────
+SYSTEMD_WANTS="$ROOT_DIR/etc/systemd/system/multi-user.target.wants"
+mkdir -p "$SYSTEMD_WANTS"
+SSH_ENABLED=false
+for candidate in \
+    "$ROOT_DIR/lib/systemd/system/ssh.service" \
+    "$ROOT_DIR/usr/lib/systemd/system/ssh.service" \
+    "$ROOT_DIR/lib/systemd/system/sshd.service" \
+    "$ROOT_DIR/usr/lib/systemd/system/sshd.service"
+do
+    if [[ -f "$candidate" ]]; then
+        SSH_UNIT_ABS="${candidate#$ROOT_DIR}"
+        ln -sf "$SSH_UNIT_ABS" "$SYSTEMD_WANTS/$(basename "$candidate")"
+        ok "SSH service enabled via systemd symlink"
+        SSH_ENABLED=true
+        break
+    fi
+done
+$SSH_ENABLED || { touch "$BOOT_DIR/ssh"; warn "SSH unit not found — boot flag set as fallback"; }
 
 # ── 3. cmdline.txt: USB OTG modules ──────────────────────────────────────────
 if [[ -f "$BOOT_DIR/cmdline.txt" ]] && ! grep -q "modules-load=dwc2" "$BOOT_DIR/cmdline.txt"; then
