@@ -79,7 +79,7 @@ def build_initial_state() -> dict:
         "probes":           {},
 
         # Boot prompt shown before web UI starts
-        "status_message":   "Press ACTION (GPIO6)\nto start web UI",
+        "status_message":   "USB gadget active\nSSH: 192.168.7.1\nPress ACTION → Web UI",
         "last_essid":       "",
 
         # Active mode state
@@ -176,10 +176,11 @@ class GhostPi:
         self._start_flask()
 
         with self._lock:
-            self._state["status_message"] = "Ready — press ACTION to start capture"
+            self._state["status_message"] = "Web UI: 192.168.7.1:80\nPress ACTION to capture"
         self._display.request_refresh()
 
-        log.info("Web UI up — press ACTION (GPIO 6) to begin capture")
+        log.info("Web UI up at http://%s:%d — press ACTION (GPIO 6) to begin capture",
+                 WEBUI_HOST, WEBUI_PORT)
 
     def run(self):
         """Block until a stop signal is received."""

@@ -46,29 +46,35 @@ def draw_splash() -> Image.Image:
     """Render the boot splash image."""
     canvas = Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT), 1)
     draw   = ImageDraw.Draw(canvas)
-    y = 0
 
     font_lg = load_font(14)
     font_md = load_font(11)
     font_sm = load_font(9)
 
     # ── Inverted header bar ───────────────────────────────────────────────
-    draw.rectangle([(0, y), (DISPLAY_WIDTH - 1, y + 17)], fill=0)
-    draw.text((4, y + 2),               "GhostPi",  font=font_lg, fill=1)
-    draw.text((DISPLAY_WIDTH - 58, y + 4), "BOOTING", font=font_sm, fill=1)
+    draw.rectangle([(0, 0), (DISPLAY_WIDTH - 1, 13)], fill=0)
+    draw.text((4, 1),                   "GhostPi",  font=font_lg, fill=1)
+    draw.text((DISPLAY_WIDTH - 58, 3),  "BOOTING",  font=font_sm, fill=1)
 
     # ── Separator ─────────────────────────────────────────────────────────
-    draw.line([(0, y + 18), (DISPLAY_WIDTH - 1, y + 18)], fill=0)
+    draw.line([(0, 14), (DISPLAY_WIDTH - 1, 14)], fill=0)
 
-    # ── Body ──────────────────────────────────────────────────────────────
-    draw.text((4, y + 25), "Initialising...",          font=font_md, fill=0)
-    draw.text((4, y + 44), "Services loading.",        font=font_sm, fill=0)
-    draw.text((4, y + 56), "Web UI starts after",      font=font_sm, fill=0)
-    draw.text((4, y + 66), "button press (GPIO6).",    font=font_sm, fill=0)
+    # ── Status body ───────────────────────────────────────────────────────
+    draw.text((4, 20), "Configuring USB gadget...",  font=font_sm, fill=0)
+    draw.text((4, 32), "Services loading.",           font=font_sm, fill=0)
 
-    # ── Bottom rule + hint ────────────────────────────────────────────────
-    draw.line([(0, y + 82), (DISPLAY_WIDTH - 1, y + 82)], fill=0)
-    draw.text((4, y + 86), "SSH: 192.168.7.1 (usb0)", font=font_sm, fill=0)
+    # ── Divider ───────────────────────────────────────────────────────────
+    draw.line([(0, 46), (DISPLAY_WIDTH - 1, 46)], fill=0)
+
+    # ── SSH access info ───────────────────────────────────────────────────
+    draw.text((4, 50), "SSH over USB gadget:",        font=font_sm, fill=0)
+    draw.text((4, 62), "ssh admin@192.168.7.1",       font=font_md, fill=0)
+
+    # ── Bottom rule + action prompt ───────────────────────────────────────
+    draw.line([(0, 82), (DISPLAY_WIDTH - 1, 82)], fill=0)
+    draw.text((4, 86),  "Press ACTION (GPIO6)",       font=font_sm, fill=0)
+    draw.text((4, 98),  "to start Web UI",            font=font_sm, fill=0)
+    draw.text((4, 110), "once booted.",               font=font_sm, fill=0)
 
     return canvas
 

@@ -468,6 +468,48 @@ Root causes identified:
 
 ---
 
+### 2026-04-18 (session 10)
+
+**SSH on SD card, gadget mode UX, display preview tool, sdcard repair script**
+
+**`setup/prepare-sd.sh`**
+- Enables SSH automatically: touches `ssh` boot flag, creates systemd symlink
+  for `ssh.service`/`sshd.service`, writes `userconf.txt` with default
+  credentials (`admin` / `ghostpi`), writes `sshd_config.d/ghostpi.conf`
+  to permit password auth. No longer requires Raspberry Pi Imager or
+  manual post-boot steps for SSH access.
+
+**`setup/sdcard-repair.sh` (new)**
+- Host-side SD card repair script — run from Linux with SD card mounted,
+  no Pi or network required.
+- `--status` mode: read-only check of SSH flag, sshd symlink, cmdline.txt,
+  config.txt, dhcpcd.conf, dnsmasq config, app files.
+- Repair mode (default): fixes all of the above, resets SSH credentials,
+  copies app files if missing.
+- Accepts `--device /dev/sdX`, `--boot /path --root /path`, or auto-detects
+  mounted partitions under `/media/` and `/mnt/`.
+
+**`tools/preview-display.py` (new)**
+- Standalone PNG renderer — no Pi hardware, no adafruit libs required.
+- Duplicates the PIL rendering logic from `display.py`; renders a 250×122
+  image and saves it scaled 4× for easy viewing.
+- `--demo`: render with fake capture data.
+- `--status`, `--mode`, `--capture`, `--networks`, etc.: custom state.
+- Useful for: testing layout changes, verifying message text fits,
+  troubleshooting display rendering without access to the Pi.
+
+**`ghostpi/splash.py`**
+- Boot splash redesigned: shows "Configuring USB gadget...", SSH address
+  (`ssh admin@192.168.7.1`), and "Press ACTION (GPIO6) to start Web UI".
+  Operator sees exactly what to do and how to connect before anything else.
+
+**`ghostpi/main.py`**
+- Boot status message (shown on e-ink after services start):
+  `"USB gadget active\nSSH: 192.168.7.1\nPress ACTION → Web UI"`
+- Post-confirm status: `"Web UI: 192.168.7.1:80\nPress ACTION to capture"`
+
+---
+
 ### 2026-04-18 (session 9)
 
 **Fix e-ink display: wrong driver class, wrong image mode, missing blinka/lgpio**
