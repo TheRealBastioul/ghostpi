@@ -28,7 +28,7 @@ try:
     import board
     import busio
     import digitalio
-    from adafruit_epd.ssd1680 import Adafruit_SSD1680
+    from adafruit_epd.ssd1680b import Adafruit_SSD1680B
     from PIL import Image, ImageDraw, ImageFont
 except Exception as exc:
     print(f"ghostpi-splash: display libraries not available ({exc})", file=sys.stderr)
@@ -44,9 +44,9 @@ def load_font(size):
 
 def draw_splash() -> Image.Image:
     """Render the boot splash image."""
-    canvas = Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT + DISPLAY_Y_OFFSET), 1)
+    canvas = Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT), 1)
     draw   = ImageDraw.Draw(canvas)
-    y = DISPLAY_Y_OFFSET
+    y = 0
 
     font_lg = load_font(14)
     font_md = load_font(11)
@@ -76,23 +76,19 @@ def draw_splash() -> Image.Image:
 def main():
     try:
         spi  = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
-        cs   = digitalio.DigitalInOut(getattr(board, f"D{EPD_CS_PIN}"))
+        cs   = digitalio.DigitalInOut(board.CE0)
         dc   = digitalio.DigitalInOut(getattr(board, f"D{EPD_DC_PIN}"))
         rst  = digitalio.DigitalInOut(getattr(board, f"D{EPD_RST_PIN}"))
         busy = digitalio.DigitalInOut(getattr(board, f"D{EPD_BUSY_PIN}"))
 
-        epd = Adafruit_SSD1680(
-            DISPLAY_HEIGHT, DISPLAY_WIDTH, spi,
+        epd = Adafruit_SSD1680B(
+            122, 250, spi,
             cs_pin=cs, dc_pin=dc, sramcs_pin=None,
             rst_pin=rst, busy_pin=busy,
         )
         epd.rotation = 1
 
-        canvas  = draw_splash()
-        visible = canvas.crop(
-            (0, DISPLAY_Y_OFFSET, DISPLAY_WIDTH, DISPLAY_Y_OFFSET + DISPLAY_HEIGHT)
-        )
-        epd.image(visible)
+        epd.image(draw_splash().convert("L"))
         epd.display()
         print("ghostpi-splash: boot screen displayed", file=sys.stderr)
 

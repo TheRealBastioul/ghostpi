@@ -1,15 +1,12 @@
 """
 GhostPi e-ink display manager.
 
-Hardware: Adafruit 2.13" Monochrome E-Ink Bonnet (SSD1680 driver).
+Hardware: Adafruit 2.13" Monochrome E-Ink Bonnet for Raspberry Pi (product 4687).
 Panel variant: GDEY0213B74 – 250×122 visible pixels, landscape.
-
-GDEY0213B74 memory offset note:
-  The SSD1680 controller has 296 source and 128 gate lines of frame buffer.
-  The GDEY0213B74 panel uses only 122 gate lines but the memory window starts
-  at gate address 16, not 0.  We compensate by creating a 250×128 pixel
-  canvas and beginning all content at row DISPLAY_Y_OFFSET (16).  Rows 0-15
-  are left blank and fall outside the panel's visible gate range.
+Driver: Adafruit_SSD1680B — the dedicated driver for the GDEY0213B74 panel
+  (not Adafruit_SSD1680; that is for the older panel and has a different init
+  sequence that causes blank output on the B74).
+  The 16-pixel gate offset of the GDEY0213B74 is handled inside the driver.
 """
 
 import time
@@ -25,7 +22,7 @@ try:
     import board
     import busio
     import digitalio
-    from adafruit_epd.ssd1680 import Adafruit_SSD1680
+    from adafruit_epd.ssd1680b import Adafruit_SSD1680B
     from PIL import Image, ImageDraw, ImageFont
     EPD_AVAILABLE = True
 except Exception as exc:
@@ -33,13 +30,11 @@ except Exception as exc:
     EPD_AVAILABLE = False
 
 from config import (
-    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_Y_OFFSET, DISPLAY_REFRESH_INTERVAL,
-    EPD_CS_PIN, EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN,
+    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_REFRESH_INTERVAL,
+    EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN,
     MODE_PASSIVE, MODE_ACTIVE, MODE_REVIEW,
     ACTIVE_MODE_ENABLED,
 )
-
-_MEM_HEIGHT = DISPLAY_HEIGHT + DISPLAY_Y_OFFSET  # 122 + 16 = 138
 
 
 class DisplayManager:
@@ -69,28 +64,22 @@ class DisplayManager:
     # ── Hardware init (runs in display thread, not main thread) ───────────────
 
     def _init_display(self):
-        """Initialise the SSD1680 via hardware SPI. Called from _run()."""
-        log.info("Initialising SSD1680 e-ink display...")
+        """Initialise the SSD1680B (GDEY0213B74) via hardware SPI. Called from _run()."""
+        log.info("Initialising SSD1680B e-ink display (GDEY0213B74)...")
         try:
-            spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+            spi  = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+            cs   = digitalio.DigitalInOut(board.CE0)                         # GPIO 8, SPI0 CE0
+            dc   = digitalio.DigitalInOut(getattr(board, f"D{EPD_DC_PIN}"))  # GPIO 22
+            rst  = digitalio.DigitalInOut(getattr(board, f"D{EPD_RST_PIN}")) # GPIO 27
+            busy = digitalio.DigitalInOut(getattr(board, f"D{EPD_BUSY_PIN}")) # GPIO 17
 
-            cs   = digitalio.DigitalInOut(getattr(board, f"D{EPD_CS_PIN}"))
-            dc   = digitalio.DigitalInOut(getattr(board, f"D{EPD_DC_PIN}"))
-            rst  = digitalio.DigitalInOut(getattr(board, f"D{EPD_RST_PIN}"))
-            busy = digitalio.DigitalInOut(getattr(board, f"D{EPD_BUSY_PIN}"))
-
-            self._epd = Adafruit_SSD1680(
-                DISPLAY_HEIGHT,
-                DISPLAY_WIDTH,
-                spi,
-                cs_pin=cs,
-                dc_pin=dc,
-                sramcs_pin=None,
-                rst_pin=rst,
-                busy_pin=busy,
+            self._epd = Adafruit_SSD1680B(
+                122, 250, spi,
+                cs_pin=cs, dc_pin=dc, sramcs_pin=None,
+                rst_pin=rst, busy_pin=busy,
             )
-            self._epd.rotation = 1   # landscape
-            log.info("E-ink display initialised (SSD1680 / GDEY0213B74)")
+            self._epd.rotation = 1   # landscape: width=250, height=122
+            log.info("E-ink display initialised (SSD1680B / GDEY0213B74)")
         except Exception as exc:
             log.error("Display hardware init failed: %s", exc)
             log.error("Check: SPI enabled in config.txt? Correct wiring? Libraries installed?")
@@ -99,12 +88,7 @@ class DisplayManager:
     # ── Canvas helpers ────────────────────────────────────────────────────────
 
     def _new_canvas(self):
-        return Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT + DISPLAY_Y_OFFSET), 1)
-
-    @staticmethod
-    def _y(row: int) -> int:
-        """Translate a logical display row to the memory-offset canvas row."""
-        return row + DISPLAY_Y_OFFSET
+        return Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT), 1)
 
     def _load_font(self, size: int = 10):
         try:
@@ -145,18 +129,18 @@ class DisplayManager:
         last_essid      = state_snapshot.get("last_essid", "")
 
         # ── Header bar (inverted: black bg, white text) ───────────────────────
-        draw.rectangle([(0, self._y(0)), (DISPLAY_WIDTH - 1, self._y(13))], fill=0)
+        draw.rectangle([(0, (0)), (DISPLAY_WIDTH - 1, (13))], fill=0)
 
         mode_label = f"[{mode.upper()}]"
         if mode == MODE_ACTIVE and not ACTIVE_MODE_ENABLED:
             mode_label += " LOCKED"
-        draw.text((4, self._y(1)), "GhostPi", font=font_lg, fill=1)
-        draw.text((DISPLAY_WIDTH - 80, self._y(3)), mode_label, font=font_sm, fill=1)
+        draw.text((4, (1)), "GhostPi", font=font_lg, fill=1)
+        draw.text((DISPLAY_WIDTH - 80, (3)), mode_label, font=font_sm, fill=1)
         if capture_running:
-            draw.text((DISPLAY_WIDTH - 26, self._y(3)), "REC", font=font_sm, fill=1)
+            draw.text((DISPLAY_WIDTH - 26, (3)), "REC", font=font_sm, fill=1)
 
         # ── Separator ─────────────────────────────────────────────────────────
-        draw.line([(0, self._y(14)), (DISPLAY_WIDTH - 1, self._y(14))], fill=0)
+        draw.line([(0, (14)), (DISPLAY_WIDTH - 1, (14))], fill=0)
 
         # ── Stats block ───────────────────────────────────────────────────────
         for label, value, row in (
@@ -165,25 +149,25 @@ class DisplayManager:
             ("Probes",     probe_count, 44),
             ("Handshakes", hs_count,    58),
         ):
-            draw.text((4, self._y(row)), f"{label}:", font=font_sm, fill=0)
-            draw.text((90, self._y(row)), str(value), font=font_med, fill=0)
+            draw.text((4, (row)), f"{label}:", font=font_sm, fill=0)
+            draw.text((90, (row)), str(value), font=font_med, fill=0)
 
         # ── Last-seen ESSID ───────────────────────────────────────────────────
         if last_essid:
-            draw.line([(0, self._y(72)), (DISPLAY_WIDTH - 1, self._y(72))], fill=0)
-            draw.text((4, self._y(74)), f"Last: {last_essid[:28]}", font=font_sm, fill=0)
+            draw.line([(0, (72)), (DISPLAY_WIDTH - 1, (72))], fill=0)
+            draw.text((4, (74)), f"Last: {last_essid[:28]}", font=font_sm, fill=0)
 
         # ── Status message (respects \n, word-wraps each segment) ─────────────
-        draw.line([(0, self._y(86)), (DISPLAY_WIDTH - 1, self._y(86))], fill=0)
+        draw.line([(0, (86)), (DISPLAY_WIDTH - 1, (86))], fill=0)
         lines = []
         for segment in status_msg.split("\n"):
             wrapped = textwrap.wrap(segment, width=35)
             lines.extend(wrapped if wrapped else [segment])
         for i, line in enumerate(lines[:3]):
-            draw.text((4, self._y(89 + i * 10)), line, font=font_sm, fill=0)
+            draw.text((4, (89 + i * 10)), line, font=font_sm, fill=0)
 
         # ── Timestamp (bottom-right) ──────────────────────────────────────────
-        draw.text((DISPLAY_WIDTH - 32, self._y(112)), time.strftime("%H:%M"),
+        draw.text((DISPLAY_WIDTH - 32, (112)), time.strftime("%H:%M"),
                   font=font_sm, fill=0)
 
         return canvas
@@ -204,10 +188,7 @@ class DisplayManager:
                 log.debug("Display stub: would refresh (mode=%s)", snapshot.get("mode"))
                 return
 
-            visible = image.crop(
-                (0, DISPLAY_Y_OFFSET, DISPLAY_WIDTH, DISPLAY_Y_OFFSET + DISPLAY_HEIGHT)
-            )
-            self._epd.image(visible)
+            self._epd.image(image.convert("L"))
             self._epd.display()
             self._last_refresh = time.monotonic()
             log.debug("Display refreshed")

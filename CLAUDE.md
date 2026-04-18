@@ -47,7 +47,10 @@ WorkingDirectory is `/home/admin/ghostpi`.
 - Pi Zero WH — ARMv6 (armhf), single core 1 GHz, 512 MB RAM
 - E-ink panel has a **16-pixel gate memory offset** — `DISPLAY_Y_OFFSET = 16` in
   config.py compensates for this.  Do not remove it.
-- SPI pins: CS=8, DC=22, RST=27, BUSY=17  (matches FPC-A002 board label: Busy=17, Reset=27)
+- SPI pins: CS=CE0(GPIO8), DC=22, RST=27, BUSY=17  (matches FPC-A002 board label: Busy=17, Reset=27)
+- Driver: `Adafruit_SSD1680B` from `adafruit_epd.ssd1680b` — DO NOT use `Adafruit_SSD1680`; that is for the older panel and produces blank output on the GDEY0213B74
+- The GDEY0213B74 16-pixel gate offset is handled inside `Adafruit_SSD1680B` — no application-level Y offset needed
+- Canvas mode must be `"1"` (PIL 1-bit); convert with `.convert("L")` before passing to `epd.image()` — the EPD base class only accepts `"RGB"` or `"L"` mode
 - Buttons: MODE=GPIO5, ACTION=GPIO6 (on the bonnet, no external wiring)
 - USB OTG data port (not the power port) provides the usb0 interface
 
@@ -139,8 +142,9 @@ sudo airmon-ng start wlan0          # manually start monitor mode
 
 ## Known quirks
 
-- `DISPLAY_Y_OFFSET = 16` — GDEY0213B74 panel gate memory offset.  Content
-  renders 16px low without it.  Do not "fix" this.
+- `DISPLAY_Y_OFFSET = 16` — kept in config.py for reference only.  The offset
+  is handled inside `Adafruit_SSD1680B`; application code renders to a plain
+  250×122 canvas with no manual offset.
 - `g_ether` module must load at boot via cmdline.txt (`modules-load=dwc2,g_ether`).
   If usb0 is missing after boot, this line is likely absent from cmdline.txt.
 - On Trixie, boot files are at `/boot/firmware/` on the Pi, but the first SD
@@ -463,6 +467,50 @@ Root causes identified:
   colour change.
 
 ---
+
+### 2026-04-18 (session 9)
+
+**Fix e-ink display: wrong driver class, wrong image mode, missing blinka/lgpio**
+
+Root cause analysis against official Adafruit product page (product 4687) and
+GitHub source for `Adafruit_CircuitPython_EPD`:
+
+1. **Wrong driver class** — code used `Adafruit_SSD1680` (older panel). The
+   GDEY0213B74 shipped since Aug 2024 requires `Adafruit_SSD1680B` from
+   `adafruit_epd.ssd1680b`. The two drivers have different init sequences,
+   different RAM address setup, and different display-update control bytes.
+   Using `Adafruit_SSD1680` on a GDEY0213B74 produces a blank display.
+
+2. **Wrong image mode** — canvas was `Image.new("1", ...)` (1-bit PIL mode).
+   The EPD base `image()` method only accepts `"RGB"` or `"L"` and raises
+   `ValueError` for anything else. That error was silently swallowed by the
+   `except Exception` in `refresh()`, so nothing ever rendered.
+   Fix: call `.convert("L")` before `epd.image()`.
+
+3. **Y offset no longer needed at application level** — `Adafruit_SSD1680B`
+   handles the 16-pixel GDEY0213B74 gate offset internally. Removed the
+   250×138 canvas, the `_y()` helper, and the pre-send crop. Canvas is now
+   a plain 250×122 image.
+
+4. **CS pin** — changed from `board.D8` to `board.CE0` to match the official
+   Adafruit example and use the proper blinka SPI chip-select constant.
+
+**`ghostpi/display.py`**
+- Import `Adafruit_SSD1680B` (was `Adafruit_SSD1680`)
+- `_init_display()`: use `Adafruit_SSD1680B`, `board.CE0` for CS
+- `_new_canvas()`: 250×122 (was 250×138)
+- Removed `_y()` helper; all row coordinates now direct integers
+- `refresh()`: `epd.image(image.convert("L"))` — no crop, correct mode
+
+**`ghostpi/splash.py`**
+- Import `Adafruit_SSD1680B`; instantiate with same args
+- Canvas 250×122, `y=0`; `draw_splash().convert("L")` before `epd.image()`
+
+**`ghostpi/config.py`**
+- `DISPLAY_Y_OFFSET` kept but annotated as reference-only (not used in rendering)
+
+**`setup/diag-display.sh`**
+- Updated to test `Adafruit_SSD1680B` import and init
 
 ### 2026-04-18 (session 8)
 

@@ -50,11 +50,11 @@ else
 fi
 
 # ── 5. adafruit_epd ───────────────────────────────────────────────────────────
-EPD_OUT=$(python3 -c "from adafruit_epd.ssd1680 import Adafruit_SSD1680; print('OK')" 2>&1)
+EPD_OUT=$(python3 -c "from adafruit_epd.ssd1680b import Adafruit_SSD1680B; print('OK')" 2>&1)
 if [[ "$EPD_OUT" == "OK" ]]; then
-    ok "from adafruit_epd.ssd1680 import Adafruit_SSD1680"
+    ok "from adafruit_epd.ssd1680b import Adafruit_SSD1680B"
 else
-    fail "adafruit_epd: $EPD_OUT"
+    fail "adafruit_epd.ssd1680b: $EPD_OUT"
 fi
 
 # ── 6. PIL ────────────────────────────────────────────────────────────────────
@@ -93,22 +93,22 @@ python3 - <<'PYEOF'
 import sys
 try:
     import board, busio, digitalio
-    from adafruit_epd.ssd1680 import Adafruit_SSD1680
+    from adafruit_epd.ssd1680b import Adafruit_SSD1680B
 
     spi  = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
-    cs   = digitalio.DigitalInOut(board.D8)
+    cs   = digitalio.DigitalInOut(board.CE0)
     dc   = digitalio.DigitalInOut(board.D22)
     rst  = digitalio.DigitalInOut(board.D27)
     busy = digitalio.DigitalInOut(board.D17)
 
-    print("Attempting Adafruit_SSD1680 init (may take 2-3s)...")
-    epd = Adafruit_SSD1680(122, 250, spi,
-                           cs_pin=cs, dc_pin=dc, sramcs_pin=None,
-                           rst_pin=rst, busy_pin=busy)
+    print("Attempting Adafruit_SSD1680B init (may take 2-3s)...")
+    epd = Adafruit_SSD1680B(122, 250, spi,
+                            cs_pin=cs, dc_pin=dc, sramcs_pin=None,
+                            rst_pin=rst, busy_pin=busy)
     epd.rotation = 1
-    print(f"\033[0;32m[OK]\033[0m    SSD1680 init succeeded! width={epd.width} height={epd.height}")
+    print(f"\033[0;32m[OK]\033[0m    SSD1680B init succeeded! width={epd.width} height={epd.height}")
 except Exception as e:
-    print(f"\033[0;31m[FAIL]\033[0m  SSD1680 init failed: {e}")
+    print(f"\033[0;31m[FAIL]\033[0m  SSD1680B init failed: {e}")
     import traceback; traceback.print_exc()
 PYEOF
 

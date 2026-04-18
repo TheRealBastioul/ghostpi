@@ -28,16 +28,16 @@ LOG_DIR = os.path.join(BASE_DIR, "logs")
 CAPTURE_PREFIX = os.path.join(LOG_DIR, "capture")   # airodump-ng file prefix
 HANDSHAKE_DIR = os.path.join(LOG_DIR, "handshakes")
 
-# ── Display (Adafruit 2.13" e-ink bonnet, SSD1680 / GDEY0213B74) ─────────────
-DISPLAY_WIDTH = 250       # visible pixels, landscape
+# ── Display (Adafruit 2.13" e-ink bonnet, product 4687, GDEY0213B74 panel) ────
+DISPLAY_WIDTH  = 250      # visible pixels, landscape
 DISPLAY_HEIGHT = 122      # visible pixels, landscape
-# The GDEY0213B74 variant has a 16-line gate offset in SSD1680 memory.
-# The first 16 rows of the SSD1680 frame buffer map to off-screen memory;
-# visible content starts at row 16.  display.py compensates for this.
-DISPLAY_Y_OFFSET = 16
+# The GDEY0213B74 has a 16-line gate offset — handled internally by
+# Adafruit_SSD1680B driver.  Application code renders to a plain 250×122 canvas.
+DISPLAY_Y_OFFSET = 16     # kept for reference only; not used in rendering
 DISPLAY_REFRESH_INTERVAL = 30    # seconds between full e-ink refreshes
 
 # SPI / GPIO pins — matches FPC-A002 Adafruit 2.13" ThinkInk bonnet label
+# CS is accessed via board.CE0 directly (not this constant) in display code.
 EPD_CS_PIN   = 8    # BCM GPIO 8  (SPI0 CE0)
 EPD_DC_PIN   = 22   # BCM GPIO 22
 EPD_RST_PIN  = 27   # BCM GPIO 27 (board label: Reset=27)
