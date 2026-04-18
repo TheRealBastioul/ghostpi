@@ -50,8 +50,9 @@ apt-get install -y --no-install-recommends \
 # ── 2. Python packages ────────────────────────────────────────────────────────
 log "Installing Python packages..."
 pip3 install --break-system-packages \
+    adafruit-blinka \
+    rpi-lgpio \
     adafruit-circuitpython-epd \
-    adafruit-circuitpython-ssd1680 \
     flask
 
 # ── 3. Enable SPI ─────────────────────────────────────────────────────────────

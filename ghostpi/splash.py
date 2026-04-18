@@ -19,8 +19,8 @@ DISPLAY_HEIGHT   = 122
 DISPLAY_Y_OFFSET = 16
 EPD_CS_PIN       = 8
 EPD_DC_PIN       = 22
-EPD_RST_PIN      = 17
-EPD_BUSY_PIN     = 4
+EPD_RST_PIN      = 27   # board label: Reset=27
+EPD_BUSY_PIN     = 17   # board label: Busy=17
 FONT_PATH        = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 
 # ── Library imports ────────────────────────────────────────────────────────

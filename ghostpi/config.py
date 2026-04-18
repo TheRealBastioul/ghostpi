@@ -37,11 +37,11 @@ DISPLAY_HEIGHT = 122      # visible pixels, landscape
 DISPLAY_Y_OFFSET = 16
 DISPLAY_REFRESH_INTERVAL = 30    # seconds between full e-ink refreshes
 
-# SPI / GPIO pins (Adafruit 2.13" bonnet default wiring on Pi GPIO header)
+# SPI / GPIO pins — matches FPC-A002 Adafruit 2.13" ThinkInk bonnet label
 EPD_CS_PIN   = 8    # BCM GPIO 8  (SPI0 CE0)
 EPD_DC_PIN   = 22   # BCM GPIO 22
-EPD_RST_PIN  = 17   # BCM GPIO 17
-EPD_BUSY_PIN = 4    # BCM GPIO 4
+EPD_RST_PIN  = 27   # BCM GPIO 27 (board label: Reset=27)
+EPD_BUSY_PIN = 17   # BCM GPIO 17 (board label: Busy=17)
 
 # ── Buttons (Adafruit bonnet) ─────────────────────────────────────────────────
 BUTTON_MODE_PIN    = 5   # BCM GPIO 5 – cycles mode (passive → active → review)

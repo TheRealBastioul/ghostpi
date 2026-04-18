@@ -47,7 +47,7 @@ WorkingDirectory is `/home/admin/ghostpi`.
 - Pi Zero WH — ARMv6 (armhf), single core 1 GHz, 512 MB RAM
 - E-ink panel has a **16-pixel gate memory offset** — `DISPLAY_Y_OFFSET = 16` in
   config.py compensates for this.  Do not remove it.
-- SPI pins: CS=8, DC=22, RST=17, BUSY=4
+- SPI pins: CS=8, DC=22, RST=27, BUSY=17  (matches FPC-A002 board label: Busy=17, Reset=27)
 - Buttons: MODE=GPIO5, ACTION=GPIO6 (on the bonnet, no external wiring)
 - USB OTG data port (not the power port) provides the usb0 interface
 
@@ -461,3 +461,35 @@ Root causes identified:
 - Added capture Start/Stop button in the header; calls `/api/capture/start`
   or `/api/capture/stop` and reflects live `capture_running` state with
   colour change.
+
+---
+
+### 2026-04-18 (session 8)
+
+**E-ink display pin fix + install dependency audit**
+
+Root causes investigated after display showing nothing on boot:
+
+**`ghostpi/config.py`**
+- `EPD_RST_PIN` corrected 17→27, `EPD_BUSY_PIN` corrected 4→17. The FPC-A002
+  board label clearly states Busy=17, Reset=27 — the previous values had them
+  swapped.
+
+**`ghostpi/splash.py`**
+- Same RST/BUSY pin correction applied (inlines constants independently of
+  config.py).
+
+**`setup/install.sh`** and **`setup/prepare-sd.sh`**
+- Removed `adafruit-circuitpython-ssd1680` (redundant — the `ssd1680` module
+  lives inside `adafruit-circuitpython-epd`; the separate package is an unrelated
+  newer standalone driver and is not imported anywhere).
+- Added `adafruit-blinka` explicitly (was only an implicit transitive dep; on
+  Pi OS Trixie with `--break-system-packages`, transitive deps can be skipped).
+- Added `rpi-lgpio` pip package — Pi OS Trixie deprecated `RPi.GPIO`; blinka
+  needs `lgpio` or `rpi-lgpio` as its GPIO backend on Trixie.
+
+**`setup/diag-display.sh` (new)**
+- Standalone diagnostic script: checks SPI device nodes, config.txt flags,
+  individual library imports (board, busio, digitalio, adafruit_epd, PIL),
+  per-pin accessibility via `digitalio.DigitalInOut`, and a full
+  `Adafruit_SSD1680` init attempt with traceback on failure.

@@ -354,8 +354,9 @@ banner "Python packages (pip)"
 set +e
 "${CHROOT[@]}" << 'CHROOTEOF'
 pip3 install --break-system-packages --no-cache-dir \
-    adafruit-circuitpython-epd \
-    adafruit-circuitpython-ssd1680
+    adafruit-blinka \
+    rpi-lgpio \
+    adafruit-circuitpython-epd
 CHROOTEOF
 PIP_EXIT=$?
 set -e
@@ -364,7 +365,7 @@ if [[ $PIP_EXIT -ne 0 ]]; then
     PIP_FAILED=true
     warn "pip install failed (exit $PIP_EXIT) — e-ink display libraries are missing."
     warn "The rest of the install will continue. You can retry on the Pi:"
-    warn "  pip3 install --break-system-packages adafruit-circuitpython-epd adafruit-circuitpython-ssd1680"
+    warn "  pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd"
 else
     ok "Python packages installed."
 fi
@@ -526,7 +527,7 @@ if [[ ${#PKG_FAILURES[@]} -gt 0 || "$PIP_FAILED" == "true" ]]; then
     if [[ "$PIP_FAILED" == "true" ]]; then
         echo -e "${YELLOW}  pip install failed (e-ink display libraries missing).${NC}"
         echo -e "${YELLOW}  Fix on the Pi after boot:${NC}"
-        echo -e "${YELLOW}    pip3 install --break-system-packages adafruit-circuitpython-epd adafruit-circuitpython-ssd1680${NC}"
+        echo -e "${YELLOW}    pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd${NC}"
     fi
     echo ""
 fi
