@@ -476,53 +476,39 @@ else
     warn "  On the Pi: sudo systemctl enable dnsmasq"
 fi
 
-# SSH — enable for USB gadget access (admin / ghostpi, change after first login)
-SSH_UNIT_FILE=""
-for candidate in \
-    "$ROOT_DIR/lib/systemd/system/ssh.service" \
-    "$ROOT_DIR/usr/lib/systemd/system/ssh.service" \
-    "$ROOT_DIR/lib/systemd/system/sshd.service" \
-    "$ROOT_DIR/usr/lib/systemd/system/sshd.service"; do
-    [[ -f "$candidate" ]] && SSH_UNIT_FILE="$candidate" && break
-done
-if [[ -n "$SSH_UNIT_FILE" ]]; then
-    UNIT_NAME="$(basename "$SSH_UNIT_FILE")"
-    PI_SSH_UNIT="${SSH_UNIT_FILE#$ROOT_DIR}"
-    ln -sf "$PI_SSH_UNIT" "$WANTS_DIR/$UNIT_NAME" 2>/dev/null || true
-    ok "SSH service enabled ($UNIT_NAME)."
-else
-    warn "SSH unit file not found in rootfs — openssh-server may not be installed."
-fi
+# SSH + user credentials for Pi OS Trixie
+#
+# Pi OS Trixie uses two first-boot mechanisms (both must be set):
+#
+#  1. /boot/ssh  — Pi OS sshswitch.service sees this file and runs
+#                  "systemctl enable --now ssh", then deletes the flag.
+#                  No manual systemd symlink is needed or correct here.
+#
+#  2. /boot/custom.toml — Pi OS init_config reads this on first boot to
+#                  create the user account and configure SSH password auth.
+#                  This is the official Trixie replacement for the older
+#                  userconf.txt mechanism.
 
-# SSH boot flag — tells Pi OS to start sshd on first boot
+# SSH boot flag
 touch "$BOOT_DIR/ssh"
-ok "SSH boot flag set ($BOOT_DIR/ssh)."
+ok "SSH boot flag set (sshswitch.service will enable ssh on first boot)."
 
-# Default user credentials (Pi OS Bookworm/Trixie requires userconf.txt for new users)
-# Format: username:SHA-512-hashed-password
-# Default password: ghostpi  — operator MUST change this after first login
-if [[ ! -f "$BOOT_DIR/userconf.txt" ]]; then
-    if command -v openssl &>/dev/null; then
-        HASH="$(echo 'ghostpi' | openssl passwd -6 -stdin)"
-        echo "${PI_USER}:${HASH}" > "$BOOT_DIR/userconf.txt"
-        ok "Default credentials set: user=${PI_USER} password=ghostpi (CHANGE AFTER FIRST LOGIN)"
-    else
-        warn "openssl not found — cannot create userconf.txt. Set credentials manually."
-        warn "  echo 'admin:HASH' > $BOOT_DIR/userconf.txt"
-    fi
-fi
+# custom.toml — user + SSH config (Pi OS Trixie first-boot mechanism)
+cat > "$BOOT_DIR/custom.toml" << EOF
+[system]
+hostname = "ghostpi"
 
-# SSH sshd_config drop-in: allow password auth over USB subnet
-SSHD_CONF_DIR="$ROOT_DIR/etc/ssh/sshd_config.d"
-mkdir -p "$SSHD_CONF_DIR"
-if [[ ! -f "$SSHD_CONF_DIR/ghostpi.conf" ]]; then
-    cat > "$SSHD_CONF_DIR/ghostpi.conf" << 'EOF'
-# GhostPi: allow password auth for USB gadget access (192.168.7.x only)
-PasswordAuthentication yes
-PermitRootLogin no
+[user]
+name = "${PI_USER}"
+password = "ghostpi"
+password_encrypted = false
+
+[ssh]
+enabled = true
+password_authentication = true
 EOF
-    ok "SSH config written (password auth enabled)."
-fi
+ok "custom.toml written: user=${PI_USER} password=ghostpi hostname=ghostpi."
+warn "Change the default password after first login: passwd"
 
 # ─── Boot partition configuration ─────────────────────────────────────────────
 

@@ -105,27 +105,18 @@ echo ""
 # ─── Status checks ────────────────────────────────────────────────────────────
 banner "Status"
 
-# SSH enabled (boot flag)
+# SSH boot flag (Pi OS Trixie: sshswitch.service enables ssh on first boot)
 if [[ -f "$BOOT_DIR/ssh" ]]; then
     ok  "SSH boot flag present ($BOOT_DIR/ssh)"
 else
-    fail "SSH boot flag missing — SSH will not start on boot"
+    fail "SSH boot flag missing — sshswitch.service won't enable SSH"
 fi
 
-# SSH service enabled
-SSH_UNIT=""
-for candidate in \
-    "$ROOT_DIR/lib/systemd/system/ssh.service" \
-    "$ROOT_DIR/usr/lib/systemd/system/ssh.service" \
-    "$ROOT_DIR/lib/systemd/system/sshd.service" \
-    "$ROOT_DIR/usr/lib/systemd/system/sshd.service"; do
-    [[ -f "$candidate" ]] && SSH_UNIT="$candidate" && break
-done
-SSH_WANTS="$ROOT_DIR/etc/systemd/system/multi-user.target.wants"
-if [[ -L "$SSH_WANTS/ssh.service" || -L "$SSH_WANTS/sshd.service" ]]; then
-    ok  "SSH service enabled (systemd wants symlink present)"
+# custom.toml (Pi OS Trixie: user + SSH config applied by init_config on first boot)
+if [[ -f "$BOOT_DIR/custom.toml" ]]; then
+    ok  "custom.toml present (first-boot user/SSH config)"
 else
-    fail "SSH service not enabled via systemd"
+    fail "custom.toml missing — no user account will be created on first boot"
 fi
 
 # USB OTG
@@ -170,12 +161,6 @@ else
     fail "GhostPi app files missing"
 fi
 
-# userconf / default credentials
-if [[ -f "$BOOT_DIR/userconf.txt" ]]; then
-    ok  "userconf.txt present (first-boot credentials set)"
-else
-    warn "userconf.txt missing — Pi OS may prompt for user setup on first boot"
-fi
 
 $STATUS_ONLY && { echo ""; echo "Status check complete (read-only)."; exit 0; }
 
@@ -183,57 +168,34 @@ $STATUS_ONLY && { echo ""; echo "Status check complete (read-only)."; exit 0; }
 banner "Applying fixes"
 
 # ── 1. SSH boot flag ──────────────────────────────────────────────────────────
+# Pi OS Trixie: sshswitch.service sees this file and runs
+# "systemctl enable --now ssh", then deletes it. No symlink needed.
 if [[ ! -f "$BOOT_DIR/ssh" ]]; then
     touch "$BOOT_DIR/ssh"
     ok "SSH boot flag created"
-fi
-
-# ── 2. SSH service systemd symlink ────────────────────────────────────────────
-mkdir -p "$SSH_WANTS"
-if [[ -n "$SSH_UNIT" ]]; then
-    UNIT_NAME="$(basename "$SSH_UNIT")"
-    # Build the Pi-side absolute path
-    PI_UNIT="${SSH_UNIT#$ROOT_DIR}"
-    if [[ ! -L "$SSH_WANTS/$UNIT_NAME" ]]; then
-        ln -sf "$PI_UNIT" "$SSH_WANTS/$UNIT_NAME"
-        ok "SSH service enabled ($UNIT_NAME symlink created)"
-    else
-        ok "SSH service already enabled"
-    fi
 else
-    warn "SSH unit file not found in rootfs — install openssh-server on Pi first"
-    warn "  sudo apt-get install openssh-server"
+    ok "SSH boot flag already present"
 fi
 
-# ── 3. Default user credentials (userconf.txt) ───────────────────────────────
-# Format: username:SHA-512 hashed password
-# Default: admin / ghostpi  — CHANGE THIS after first login!
-if [[ ! -f "$BOOT_DIR/userconf.txt" ]]; then
-    # Generate SHA-512 hash of 'ghostpi'
-    if command -v openssl &>/dev/null; then
-        HASH="$(echo 'ghostpi' | openssl passwd -6 -stdin)"
-        echo "${PI_USER}:${HASH}" > "$BOOT_DIR/userconf.txt"
-        ok "userconf.txt created: user='${PI_USER}' password='ghostpi' (CHANGE AFTER FIRST LOGIN)"
-    else
-        warn "openssl not found — cannot create userconf.txt automatically"
-        warn "Create it manually: echo 'admin:HASH' > $BOOT_DIR/userconf.txt"
-        warn "Generate hash: echo 'yourpassword' | openssl passwd -6 -stdin"
-    fi
-fi
+# ── 2. custom.toml — user + SSH config (Pi OS Trixie first-boot mechanism) ───
+# init_config reads this on first boot: creates user account, enables SSH
+# with password auth. This replaces the old userconf.txt approach.
+cat > "$BOOT_DIR/custom.toml" << EOF
+[system]
+hostname = "ghostpi"
 
-# ── 4. SSH config: permit root login and password auth ───────────────────────
-SSH_CONF="$ROOT_DIR/etc/ssh/sshd_config.d/ghostpi.conf"
-mkdir -p "$(dirname "$SSH_CONF")"
-if [[ ! -f "$SSH_CONF" ]]; then
-    cat > "$SSH_CONF" << 'EOF'
-# GhostPi SSH config — allows password auth over USB gadget (192.168.7.x only)
-PasswordAuthentication yes
-PermitRootLogin no
+[user]
+name = "${PI_USER}"
+password = "ghostpi"
+password_encrypted = false
+
+[ssh]
+enabled = true
+password_authentication = true
 EOF
-    ok "SSH config written ($SSH_CONF)"
-fi
+ok "custom.toml written: user=${PI_USER} password=ghostpi (CHANGE AFTER FIRST LOGIN)"
 
-# ── 5. cmdline.txt: USB OTG modules ──────────────────────────────────────────
+# ── 3. cmdline.txt: USB OTG modules ──────────────────────────────────────────
 if [[ -f "$BOOT_DIR/cmdline.txt" ]] && ! grep -q "modules-load=dwc2" "$BOOT_DIR/cmdline.txt"; then
     sed -i 's/$/ modules-load=dwc2,g_ether/' "$BOOT_DIR/cmdline.txt"
     ok "cmdline.txt: modules-load=dwc2,g_ether added"
@@ -241,7 +203,7 @@ else
     ok "cmdline.txt: USB OTG already configured"
 fi
 
-# ── 6. config.txt: SPI + dwc2 overlay ────────────────────────────────────────
+# ── 4. config.txt: SPI + dwc2 overlay ────────────────────────────────────────
 CONFIG_TXT="$BOOT_DIR/config.txt"
 ADDED_CONFIG=false
 
@@ -256,7 +218,7 @@ fi
 $ADDED_CONFIG && ok "config.txt: SPI/dwc2 settings added" \
               || ok "config.txt: already configured"
 
-# ── 7. dhcpcd.conf: usb0 static IP ──────────────────────────────────────────
+# ── 5. dhcpcd.conf: usb0 static IP ──────────────────────────────────────────
 DHCPCD="$ROOT_DIR/etc/dhcpcd.conf"
 if ! grep -q "interface usb0" "$DHCPCD" 2>/dev/null; then
     cat >> "$DHCPCD" << 'EOF'
@@ -272,7 +234,7 @@ else
     ok "dhcpcd.conf: usb0 already configured"
 fi
 
-# ── 8. dnsmasq config ────────────────────────────────────────────────────────
+# ── 6. dnsmasq config ────────────────────────────────────────────────────────
 DNSMASQ_CONF="$ROOT_DIR/etc/dnsmasq.d/ghostpi-usb.conf"
 mkdir -p "$ROOT_DIR/etc/dnsmasq.d"
 if [[ ! -f "$DNSMASQ_CONF" ]]; then
@@ -288,7 +250,7 @@ else
     ok "dnsmasq: config already present"
 fi
 
-# ── 9. GhostPi app files ─────────────────────────────────────────────────────
+# ── 7. GhostPi app files ─────────────────────────────────────────────────────
 APP_DEST="$ROOT_DIR/home/$PI_USER/ghostpi"
 if [[ ! -f "$APP_DEST/ghostpi/main.py" ]]; then
     mkdir -p "$APP_DEST"
