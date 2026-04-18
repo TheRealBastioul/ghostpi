@@ -1,10 +1,11 @@
 [Unit]
 Description=GhostPi Wireless Pentest Tool
 Documentation=file:///home/admin/ghostpi/README.md
-After=network.target network-online.target
-Wants=network-online.target
-# Give the USB gadget network interface time to come up
-After=systemd-networkd.service
+# network.target: SSH and basic network services are up before we start.
+# Deliberately NOT waiting on network-online.target — on a Pi Zero with only
+# USB gadget (usb0) that target can take 90 s to time out, delaying the
+# e-ink boot prompt and the operator's ability to SSH in.
+After=network.target
 
 [Service]
 Type=simple

@@ -19,6 +19,8 @@ import textwrap
 
 log = logging.getLogger(__name__)
 
+# Catch Exception, not just ImportError — board/busio raise RuntimeError when
+# not running on Pi hardware, and that would otherwise propagate and crash the module.
 try:
     import board
     import busio
@@ -26,8 +28,8 @@ try:
     from adafruit_epd.ssd1680 import Adafruit_SSD1680
     from PIL import Image, ImageDraw, ImageFont
     EPD_AVAILABLE = True
-except ImportError:
-    log.warning("E-ink / PIL libraries not available – display running in stub mode")
+except Exception as exc:
+    log.warning("E-ink / PIL libraries not available (%s) – display in stub mode", exc)
     EPD_AVAILABLE = False
 
 from config import (
@@ -37,21 +39,13 @@ from config import (
     ACTIVE_MODE_ENABLED,
 )
 
-# Full SSD1680 memory height for GDEY0213B74 (gate lines)
-_MEM_HEIGHT = DISPLAY_HEIGHT + DISPLAY_Y_OFFSET  # 122 + 16 = 138, padded to 128
-# The SSD1680 physical gate max is 296; 128 is the nearest power-of-2 ≥ 122+16.
-# In practice adafruit_epd handles gate sizing internally; we just offset drawing.
+_MEM_HEIGHT = DISPLAY_HEIGHT + DISPLAY_Y_OFFSET  # 122 + 16 = 138
 
 
 class DisplayManager:
     """Thread-safe e-ink display manager."""
 
     def __init__(self, state: dict, state_lock: threading.Lock):
-        """
-        Args:
-            state:      Shared application state dict (updated by capture daemon).
-            state_lock: Lock protecting ``state``.
-        """
         self._state = state
         self._lock = state_lock
         self._epd = None
@@ -60,21 +54,23 @@ class DisplayManager:
         self._thread = None
         self._last_refresh = 0.0
 
-        # Fonts loaded once and reused — ImageFont.truetype() hits the filesystem
+        # Fonts loaded once here — ImageFont.truetype() hits the filesystem.
+        # Hardware init is deferred to _run() so a slow/hung SPI init never
+        # blocks the main thread or delays button/Flask startup.
         self._font_sm = None
         self._font_md = None
         self._font_lg = None
 
         if EPD_AVAILABLE:
-            self._init_display()
             self._font_sm = self._load_font(9)
             self._font_md = self._load_font(11)
             self._font_lg = self._load_font(14)
 
-    # ── Initialisation ────────────────────────────────────────────────────────
+    # ── Hardware init (runs in display thread, not main thread) ───────────────
 
     def _init_display(self):
-        """Initialise the SSD1680 via hardware SPI."""
+        """Initialise the SSD1680 via hardware SPI. Called from _run()."""
+        log.info("Initialising SSD1680 e-ink display...")
         try:
             spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 
@@ -83,9 +79,6 @@ class DisplayManager:
             rst  = digitalio.DigitalInOut(getattr(board, f"D{EPD_RST_PIN}"))
             busy = digitalio.DigitalInOut(getattr(board, f"D{EPD_BUSY_PIN}"))
 
-            # Adafruit_SSD1680(height, width, spi, ...)
-            # We pass DISPLAY_HEIGHT (122) – the driver uses this for gate sizing.
-            # The GDEY0213B74 Y offset is handled by our canvas offset below.
             self._epd = Adafruit_SSD1680(
                 DISPLAY_HEIGHT,
                 DISPLAY_WIDTH,
@@ -99,19 +92,13 @@ class DisplayManager:
             self._epd.rotation = 1   # landscape
             log.info("E-ink display initialised (SSD1680 / GDEY0213B74)")
         except Exception as exc:
-            log.error("Display init failed: %s", exc)
+            log.error("Display hardware init failed: %s", exc)
+            log.error("Check: SPI enabled in config.txt? Correct wiring? Libraries installed?")
             self._epd = None
 
     # ── Canvas helpers ────────────────────────────────────────────────────────
 
     def _new_canvas(self):
-        """
-        Return a blank white PIL Image sized for the full SSD1680 memory canvas.
-
-        The image is DISPLAY_WIDTH × (DISPLAY_HEIGHT + DISPLAY_Y_OFFSET).
-        All drawing helpers add DISPLAY_Y_OFFSET to the y coordinate so that
-        content aligns with the GDEY0213B74 visible gate window.
-        """
         return Image.new("1", (DISPLAY_WIDTH, DISPLAY_HEIGHT + DISPLAY_Y_OFFSET), 1)
 
     @staticmethod
@@ -120,9 +107,10 @@ class DisplayManager:
         return row + DISPLAY_Y_OFFSET
 
     def _load_font(self, size: int = 10):
-        """Load a truetype font or fall back to PIL default."""
         try:
-            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", size)
+            return ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", size
+            )
         except Exception:
             return ImageFont.load_default()
 
@@ -130,14 +118,15 @@ class DisplayManager:
 
     def _render(self, state_snapshot: dict) -> Image.Image:
         """
-        Build the full display image from a snapshot of application state.
+        Build the full display image from a state snapshot.
 
-        Layout (250×122 visible, all y coords already offset internally):
-          Row  0-14  : Header bar (mode, signal icon)
-          Row 15     : Separator
-          Row 16-70  : Stats block (networks, clients, probes, handshakes)
-          Row 71-100 : Status / last-seen ESSID
-          Row 101-121: Scrolling status message
+        Layout (250×122 visible):
+          Row  0-13 : Header bar (GhostPi title, mode badge, REC indicator)
+          Row 14    : Separator
+          Row 16-70 : Stats (networks, clients, probes, handshakes)
+          Row 72-84 : Last-seen ESSID (when capture running)
+          Row 86-119: Status message (word-wrapped, up to 3 lines)
+          Row 112   : Timestamp (bottom-right)
         """
         canvas = self._new_canvas()
         draw   = ImageDraw.Draw(canvas)
@@ -148,15 +137,14 @@ class DisplayManager:
 
         mode            = state_snapshot.get("mode", MODE_PASSIVE)
         capture_running = state_snapshot.get("capture_running", False)
-        net_count   = state_snapshot.get("network_count", 0)
-        cli_count   = state_snapshot.get("client_count", 0)
-        probe_count = state_snapshot.get("probe_count", 0)
-        hs_count    = state_snapshot.get("handshake_count", 0)
-        status_msg  = state_snapshot.get("status_message", "Initialising...")
-        last_essid  = state_snapshot.get("last_essid", "")
+        net_count       = state_snapshot.get("network_count", 0)
+        cli_count       = state_snapshot.get("client_count", 0)
+        probe_count     = state_snapshot.get("probe_count", 0)
+        hs_count        = state_snapshot.get("handshake_count", 0)
+        status_msg      = state_snapshot.get("status_message", "Initialising...")
+        last_essid      = state_snapshot.get("last_essid", "")
 
-        # ── Header bar ────────────────────────────────────────────────────────
-        # Invert header: filled black rectangle, white text
+        # ── Header bar (inverted: black bg, white text) ───────────────────────
         draw.rectangle([(0, self._y(0)), (DISPLAY_WIDTH - 1, self._y(13))], fill=0)
 
         mode_label = f"[{mode.upper()}]"
@@ -171,44 +159,41 @@ class DisplayManager:
         draw.line([(0, self._y(14)), (DISPLAY_WIDTH - 1, self._y(14))], fill=0)
 
         # ── Stats block ───────────────────────────────────────────────────────
-        stats = [
-            ("Networks",    net_count,   16),
-            ("Clients",     cli_count,   30),
-            ("Probes",      probe_count, 44),
-            ("Handshakes",  hs_count,    58),
-        ]
-        for label, value, row in stats:
+        for label, value, row in (
+            ("Networks",   net_count,   16),
+            ("Clients",    cli_count,   30),
+            ("Probes",     probe_count, 44),
+            ("Handshakes", hs_count,    58),
+        ):
             draw.text((4, self._y(row)), f"{label}:", font=font_sm, fill=0)
             draw.text((90, self._y(row)), str(value), font=font_med, fill=0)
 
         # ── Last-seen ESSID ───────────────────────────────────────────────────
         if last_essid:
             draw.line([(0, self._y(72)), (DISPLAY_WIDTH - 1, self._y(72))], fill=0)
-            essid_display = last_essid[:28] if len(last_essid) > 28 else last_essid
-            draw.text((4, self._y(74)), f"Last: {essid_display}", font=font_sm, fill=0)
+            draw.text((4, self._y(74)), f"Last: {last_essid[:28]}", font=font_sm, fill=0)
 
-        # ── Status message (word-wrapped) ─────────────────────────────────────
+        # ── Status message (respects \n, word-wraps each segment) ─────────────
         draw.line([(0, self._y(86)), (DISPLAY_WIDTH - 1, self._y(86))], fill=0)
-        wrapped = textwrap.wrap(status_msg, width=35)
-        for i, line in enumerate(wrapped[:3]):   # max 3 lines in the status area
+        lines = []
+        for segment in status_msg.split("\n"):
+            wrapped = textwrap.wrap(segment, width=35)
+            lines.extend(wrapped if wrapped else [segment])
+        for i, line in enumerate(lines[:3]):
             draw.text((4, self._y(89 + i * 10)), line, font=font_sm, fill=0)
 
-        # ── Timestamp (bottom-right corner) ──────────────────────────────────
-        ts = time.strftime("%H:%M")
-        draw.text((DISPLAY_WIDTH - 32, self._y(112)), ts, font=font_sm, fill=0)
+        # ── Timestamp (bottom-right) ──────────────────────────────────────────
+        draw.text((DISPLAY_WIDTH - 32, self._y(112)), time.strftime("%H:%M"),
+                  font=font_sm, fill=0)
 
         return canvas
 
     def request_refresh(self):
-        """
-        Signal the display thread to refresh on its next wake-up (non-blocking).
-        Use this from GPIO callbacks instead of calling refresh() directly to
-        avoid blocking the callback context during SPI I/O (1–3 s on e-ink).
-        """
+        """Signal the display thread to refresh (non-blocking, safe from GPIO callbacks)."""
         self._refresh_requested.set()
 
     def refresh(self):
-        """Push the current state to the e-ink panel. Never raises."""
+        """Push current state to the e-ink panel. Never raises."""
         try:
             with self._lock:
                 snapshot = dict(self._state)
@@ -219,8 +204,9 @@ class DisplayManager:
                 log.debug("Display stub: would refresh (mode=%s)", snapshot.get("mode"))
                 return
 
-            visible = image.crop((0, DISPLAY_Y_OFFSET,
-                                  DISPLAY_WIDTH, DISPLAY_Y_OFFSET + DISPLAY_HEIGHT))
+            visible = image.crop(
+                (0, DISPLAY_Y_OFFSET, DISPLAY_WIDTH, DISPLAY_Y_OFFSET + DISPLAY_HEIGHT)
+            )
             self._epd.image(visible)
             self._epd.display()
             self._last_refresh = time.monotonic()
@@ -231,7 +217,11 @@ class DisplayManager:
     # ── Thread lifecycle ──────────────────────────────────────────────────────
 
     def _run(self):
-        """Background loop: unkillable — any exception is logged and the loop continues."""
+        """Background loop — hardware init happens here, not in __init__."""
+        # Init hardware in this thread so a hung SPI init doesn't block startup.
+        if EPD_AVAILABLE:
+            self._init_display()
+
         while not self._stop_event.is_set():
             try:
                 self.refresh()

@@ -89,15 +89,15 @@ print_status() {
     done
     $all_tools && ok "aircrack-ng suite : all tools present"
 
-    # Python packages
+    # Python packages (use the actual import names, not the pip package names)
     local py_ok=true
-    for pkg in adafruit_circuitpython_epd adafruit_circuitpython_ssd1680 flask RPi; do
+    for pkg in adafruit_epd flask RPi PIL; do
         if ! python3 -c "import $pkg" &>/dev/null; then
             fail "Python package    : $pkg not importable"
             py_ok=false
         fi
     done
-    $py_ok && ok "Python packages   : all importable"
+    $py_ok && ok "Python packages   : all importable (adafruit_epd, flask, RPi, PIL)"
 
     # Config files
     [[ -f /etc/dnsmasq.d/ghostpi-usb.conf ]] \

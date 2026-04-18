@@ -67,6 +67,9 @@ class ButtonHandler:
         # Review mode: index into the network list for paging
         self._review_index = 0
 
+        # Boot confirmation: set by main before web UI starts; cleared on first ACTION press
+        self._boot_confirm_event: threading.Event | None = None
+
         self._stop_event = threading.Event()
 
         if GPIO_AVAILABLE:
@@ -120,8 +123,29 @@ class ButtonHandler:
         if self._display:
             self._display.request_refresh()
 
+    def set_boot_mode(self, confirm_event: threading.Event):
+        """
+        Enter boot-confirmation mode.  The next ACTION press fires confirm_event
+        instead of its normal action.  main.py calls this before waiting for
+        the user to start the web UI.
+        """
+        self._boot_confirm_event = confirm_event
+        log.info("Button handler: boot confirmation mode active (press GPIO6 to start)")
+
     def _on_action_press(self, channel: int):
         """GPIO 6 pressed: context-sensitive action."""
+        # Boot-confirmation takes priority over everything else
+        if self._boot_confirm_event is not None:
+            log.info("Boot confirmation received via GPIO6")
+            evt = self._boot_confirm_event
+            self._boot_confirm_event = None
+            with self._lock:
+                self._state["status_message"] = "Starting web UI..."
+            if self._display:
+                self._display.request_refresh()
+            evt.set()
+            return
+
         with self._lock:
             current_mode = self._state.get("mode", MODE_PASSIVE)
 

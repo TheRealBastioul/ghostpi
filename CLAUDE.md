@@ -326,6 +326,67 @@ ARMv6 core, crashing the watchdog and taking down display and Flask with it.
 
 **CPU/RAM optimisation + display crash-hardening**
 
+*(see previous entry — this was the session 5 changelog)*
+
+---
+
+### 2026-04-18 (session 6)
+
+**Fix display not rendering + boot confirmation gate + SSH safety**
+
+Root causes identified:
+- `_init_display()` was called in `__init__` (main thread) — if SSD1680 BUSY
+  pin never asserted, the entire process hung before any thread started
+- Import block only caught `ImportError`; `board` module raises `RuntimeError`
+  when not on Pi hardware, which propagated and crashed the display module
+- Flask started automatically on boot with no user confirmation
+- `network-online.target` dependency delayed service start up to 90 s on Pi
+  Zero with no WiFi (usb0-only setups)
+- `repair.sh` checked wrong Python module names (`adafruit_circuitpython_epd`
+  instead of `adafruit_epd`)
+
+**`ghostpi/display.py`**
+- Import block now catches `Exception` (was `ImportError` only) — covers
+  `RuntimeError` from `board` module, `AttributeError` from `busio`, etc.
+  Logs the actual exception message so the operator knows what failed.
+- `_init_display()` moved from `__init__` to start of `_run()` thread body.
+  Main thread is no longer blocked if SPI/BUSY init hangs; display thread
+  absorbs the hang independently while Flask and buttons start normally.
+- `_render()`: status_message now splits on `\n` before `textwrap.wrap()` so
+  explicit line breaks are preserved (needed for the boot prompt message).
+
+**`ghostpi/buttons.py`**
+- Added `_boot_confirm_event: threading.Event | None` field.
+- Added `set_boot_mode(confirm_event)`: registers a one-shot boot-confirm
+  handler. Next ACTION press fires the event and clears itself; all subsequent
+  ACTION presses behave normally (capture toggle).
+
+**`ghostpi/main.py`**
+- `build_initial_state()`: `status_message` changed to
+  `"Press ACTION (GPIO6)\nto start web UI"` — this is what the e-ink shows
+  on first boot before anything else starts.
+- `start()` split into three stages:
+  1. Display + buttons start (e-ink shows boot prompt immediately)
+  2. `_wait_for_boot_confirm()` blocks until GPIO6 pressed — Flask never
+     starts until the operator is physically present
+  3. Flask + capture-ready start; status updates to
+     `"Ready — press ACTION to start capture"`
+- Added `_wait_for_boot_confirm()` method.
+
+**`ghostpi/systemd/ghostpi.service`**
+- Removed `Wants=network-online.target` and `After=network-online.target
+  network-online.target systemd-networkd.service`.
+- Now only `After=network.target` — SSH and basic network services are up,
+  but ghostpi no longer waits for the "online" check that can time out for
+  90 s on a Pi Zero with only usb0.
+
+**`setup/repair.sh`**
+- Fixed Python package importability check: was incorrectly testing
+  `adafruit_circuitpython_epd` (pip package name) instead of `adafruit_epd`
+  (actual import name). Now checks `adafruit_epd`, `flask`, `RPi`, `PIL`.
+
+**CPU/RAM optimisation + display crash-hardening**
+
 **`ghostpi/config.py`**
 - `MAX_PROBES_PER_STA`: 20 → 10 (halves probe RAM, bounded by construction)
 

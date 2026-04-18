@@ -78,8 +78,8 @@ def build_initial_state() -> dict:
         "clients":          {},
         "probes":           {},
 
-        # Display status line
-        "status_message":   "GhostPi Ready",
+        # Boot prompt shown before web UI starts
+        "status_message":   "Press ACTION (GPIO6)\nto start web UI",
         "last_essid":       "",
 
         # Active mode state
@@ -136,8 +136,19 @@ class GhostPi:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    def _wait_for_boot_confirm(self):
+        """
+        Show boot prompt on e-ink and block until GPIO6 is pressed.
+        Display and buttons must already be running when this is called.
+        """
+        confirmed = threading.Event()
+        self._buttons.set_boot_mode(confirmed)
+        log.info("Boot prompt active — waiting for GPIO6 press to start web UI")
+        confirmed.wait()   # blocks indefinitely until button pressed
+        log.info("Boot confirmed")
+
     def start(self):
-        """Start all components."""
+        """Start all components in the correct order."""
         log.info("=" * 50)
         log.info("GhostPi starting")
         if ACTIVE_MODE_ENABLED:
@@ -152,12 +163,23 @@ class GhostPi:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT,  self._handle_signal)
 
-        self._capture.start()   # ready state only — capture starts on user button press
+        # Stage 1: display + buttons — e-ink shows boot prompt immediately
         self._display.start()
         self._buttons.start()
+
+        # Stage 2: wait for user to press ACTION (GPIO6) before starting web UI.
+        # This keeps Flask off the air until the operator is ready.
+        self._wait_for_boot_confirm()
+
+        # Stage 3: start web UI and make capture daemon ready
+        self._capture.start()   # ready state only — capture starts on GPIO6 press
         self._start_flask()
 
-        log.info("All components started — press ACTION (GPIO 6) to begin capture")
+        with self._lock:
+            self._state["status_message"] = "Ready — press ACTION to start capture"
+        self._display.request_refresh()
+
+        log.info("Web UI up — press ACTION (GPIO 6) to begin capture")
 
     def run(self):
         """Block until a stop signal is received."""
