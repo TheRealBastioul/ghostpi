@@ -349,24 +349,58 @@ fi
 
 banner "Python packages (pip)"
 
-# Temporarily suspend errexit so a pip failure doesn't kill the script —
-# we report it in the final summary instead.
+# Strategy: download all wheels on the HOST machine (which has internet), copy them
+# into the chroot, then install offline.  The three adafruit packages and all their
+# dependencies are pure-Python (py3-none-any wheels) so no ARM compilation needed.
+# This avoids both QEMU pip reliability issues and any need for internet on first boot.
+
+WHEEL_DIR="$(mktemp -d /tmp/ghostpi-wheels-XXXX)"
+PIP_FAILED=false
+
+info "Downloading Python wheels on host (platform-independent — works on any arch)..."
 set +e
-"${CHROOT[@]}" << 'CHROOTEOF'
-pip3 install --break-system-packages --no-cache-dir \
+pip3 download \
+    --dest "$WHEEL_DIR" \
+    --no-cache-dir \
     adafruit-blinka \
     rpi-lgpio \
     adafruit-circuitpython-epd
-CHROOTEOF
-PIP_EXIT=$?
+HOST_DL_EXIT=$?
 set -e
+
+if [[ $HOST_DL_EXIT -eq 0 && $(ls "$WHEEL_DIR" | wc -l) -gt 0 ]]; then
+    WHEEL_COUNT="$(ls "$WHEEL_DIR" | wc -l)"
+    ok "Downloaded $WHEEL_COUNT wheel(s) on host."
+
+    # Copy wheels into chroot temp dir and install offline (no network in chroot needed)
+    cp -r "$WHEEL_DIR" "$ROOT_DIR/tmp/ghostpi-wheels"
+    set +e
+    "${CHROOT[@]}" /bin/bash -c \
+        'pip3 install --break-system-packages --no-cache-dir --no-index \
+             --find-links=/tmp/ghostpi-wheels \
+             adafruit-blinka rpi-lgpio adafruit-circuitpython-epd'
+    PIP_EXIT=$?
+    set -e
+    rm -rf "$ROOT_DIR/tmp/ghostpi-wheels"
+else
+    warn "Host-side pip download failed (exit $HOST_DL_EXIT) — falling back to pip in QEMU chroot."
+    set +e
+    "${CHROOT[@]}" /bin/bash -c \
+        'pip3 install --break-system-packages --no-cache-dir \
+             adafruit-blinka rpi-lgpio adafruit-circuitpython-epd'
+    PIP_EXIT=$?
+    set -e
+fi
+
+rm -rf "$WHEEL_DIR"
 
 if [[ $PIP_EXIT -ne 0 ]]; then
     PIP_FAILED=true
-    warn "pip install failed inside QEMU chroot (exit $PIP_EXIT)."
-    warn "A first-boot service (ghostpi-pip.service) will retry pip install natively on the Pi."
+    warn "pip install failed (exit $PIP_EXIT)."
+    warn "Fix on the Pi after boot (requires internet):"
+    warn "  sudo pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd"
 else
-    ok "Python packages installed via QEMU chroot."
+    ok "Python packages installed into SD card rootfs (offline — no internet needed on Pi)."
 fi
 
 # Remove the service-blocking policy file before we configure services
@@ -453,30 +487,6 @@ cp "$REPO_DIR/systemd/ghostpi-splash.service" "$SYSTEMD_DIR/ghostpi-splash.servi
 ln -sf /etc/systemd/system/ghostpi-splash.service \
        "$WANTS_DIR/ghostpi-splash.service"
 ok "ghostpi-splash.service installed and enabled."
-
-# First-boot pip installer — installs adafruit libs natively on the Pi.
-# Runs before ghostpi-splash so display works on first boot.
-# Uses ConditionPathExists so it only runs once; self-disables after success.
-cat > "$SYSTEMD_DIR/ghostpi-pip.service" << 'EOF'
-[Unit]
-Description=GhostPi first-boot Python package installer
-After=network.target
-Before=ghostpi-splash.service ghostpi.service
-ConditionPathExists=!/var/lib/ghostpi-pip-done
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash -c 'pip3 install --break-system-packages --no-cache-dir adafruit-blinka rpi-lgpio adafruit-circuitpython-epd && touch /var/lib/ghostpi-pip-done'
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-ln -sf /etc/systemd/system/ghostpi-pip.service \
-       "$WANTS_DIR/ghostpi-pip.service"
-ok "ghostpi-pip.service installed (first-boot pip installer — runs once, needs internet on first boot)."
 
 # dnsmasq — find the unit file in the rootfs and create the wants symlink
 DNSMASQ_UNIT=""

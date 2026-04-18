@@ -504,12 +504,12 @@ suppression.
   with per-setting idempotent loop.
 
 **`setup/prepare-sd.sh`**
-- Added `ghostpi-pip.service`: a first-boot systemd oneshot that installs the
-  three pip packages natively on the Pi if QEMU chroot pip failed. Uses
-  `ConditionPathExists=!/var/lib/ghostpi-pip-done` so it only runs once.
-  Installed and enabled alongside the main service. Requires internet on
-  first boot only (Pi has no WiFi in monitor mode yet — USB tethering or
-  wlan0 must be available).
+- Rewrote pip install section: downloads all wheels on the HOST machine first
+  (`pip3 download --dest`), copies them into the chroot, then installs offline
+  with `--no-index --find-links`. All three packages and their deps are pure
+  Python (py3-none-any wheels) so no ARM compilation or Pi internet needed.
+  Falls back to network pip in QEMU chroot if host download fails.
+  Removed `ghostpi-pip.service` — Pi requires zero internet access at any point.
 
 ---
 
