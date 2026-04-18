@@ -223,12 +223,19 @@ for p in /boot/firmware/config.txt /boot/config.txt; do
 done
 
 if [[ -n "$CONFIG_TXT" ]]; then
-    if ! grep -q 'dtoverlay=dwc2' "$CONFIG_TXT"; then
-        info "Appending boot settings to $CONFIG_TXT..."
-        cat "${GHOSTPI_DIR}/setup/boot_config.txt" >> "$CONFIG_TXT"
-        ok "Boot config updated — reboot required."
+    REPAIR_ADDED=0
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        KEY="${line%%=*}"
+        if ! grep -q "^${KEY}" "$CONFIG_TXT" 2>/dev/null; then
+            echo "$line" >> "$CONFIG_TXT"
+            (( REPAIR_ADDED++ )) || true
+        fi
+    done < "${GHOSTPI_DIR}/setup/boot_config.txt"
+    if [[ $REPAIR_ADDED -gt 0 ]]; then
+        ok "Boot config: $REPAIR_ADDED setting(s) added to $CONFIG_TXT — reboot required."
     else
-        ok "Boot config already present."
+        ok "Boot config: all settings already present in $CONFIG_TXT."
     fi
 
     local_cmdline=""

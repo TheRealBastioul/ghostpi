@@ -468,6 +468,27 @@ Root causes identified:
 
 ---
 
+### 2026-04-18 (session 8)
+
+**Fix prepare-sd.sh config.txt not applying SPI and other settings**
+
+Root cause: the boot config section used a single `if ! grep -q 'dtoverlay=dwc2'`
+guard around the entire `boot_config.txt` append. If `dtoverlay=dwc2` was already
+present for any reason, `dtparam=spi=on` and all other settings were silently
+skipped — leaving the Pi with no SPI (e-ink won't work) and no Bluetooth/LED
+suppression.
+
+**`setup/prepare-sd.sh`**
+- Replaced the single guarded block with a per-setting idempotent loop: reads
+  every non-comment, non-blank line from `boot_config.txt`, extracts the key
+  (`KEY="${line%%=*}"`), checks `grep -q "^${KEY}" config.txt`, and appends only
+  if missing. Safe to re-run; reports how many settings were added.
+- `cmdline.txt` handling was already correct (separate idempotent check).
+- All other automation (custom.toml, ssh flag, dhcpcd, dnsmasq, systemd symlinks)
+  was already correct — no manual user steps needed for any of these.
+
+---
+
 ### 2026-04-18 (session 10)
 
 **SSH on SD card, gadget mode UX, display preview tool, sdcard repair script**

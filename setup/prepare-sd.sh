@@ -517,13 +517,23 @@ banner "Boot partition"
 CONFIG_TXT="$BOOT_DIR/config.txt"
 CMDLINE_TXT="$BOOT_DIR/cmdline.txt"
 
-# Append GhostPi boot settings (guards against double-append)
-if ! grep -q 'dtoverlay=dwc2' "$CONFIG_TXT"; then
-    # Strip the header comment from boot_config.txt and append
-    grep -v '^#.*GhostPi' "$SCRIPT_DIR/boot_config.txt" >> "$CONFIG_TXT"
-    ok "config.txt: GhostPi settings appended."
+# Apply each setting from boot_config.txt independently (idempotent).
+# Reads every non-comment, non-blank line and appends it only if the key
+# is not already present.  This means re-running the script is always safe.
+BOOT_CFG_ADDED=0
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    KEY="${line%%=*}"
+    if ! grep -q "^${KEY}" "$CONFIG_TXT" 2>/dev/null; then
+        echo "$line" >> "$CONFIG_TXT"
+        (( BOOT_CFG_ADDED++ )) || true
+    fi
+done < "$SCRIPT_DIR/boot_config.txt"
+
+if [[ $BOOT_CFG_ADDED -gt 0 ]]; then
+    ok "config.txt: $BOOT_CFG_ADDED setting(s) added from boot_config.txt."
 else
-    warn "config.txt: dtoverlay=dwc2 already present — skipping append."
+    ok "config.txt: all GhostPi settings already present."
 fi
 
 # cmdline.txt must remain a single line; add USB OTG module loading
