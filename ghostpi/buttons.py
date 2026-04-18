@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 try:
     import RPi.GPIO as GPIO
     GPIO_AVAILABLE = True
-except ImportError:
+except Exception:
     log.warning("RPi.GPIO not available – button handler running in stub mode")
     GPIO_AVAILABLE = False
 
