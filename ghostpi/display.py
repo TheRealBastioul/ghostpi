@@ -182,10 +182,13 @@ class DisplayManager:
             with self._lock:
                 snapshot = dict(self._state)
 
+            if not EPD_AVAILABLE:
+                log.debug("Display stub: would refresh (mode=%s)", snapshot.get("mode"))
+                return
+
             image = self._render(snapshot)
 
-            if not EPD_AVAILABLE or self._epd is None:
-                log.debug("Display stub: would refresh (mode=%s)", snapshot.get("mode"))
+            if self._epd is None:
                 return
 
             self._epd.image(image.convert("L"))

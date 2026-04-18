@@ -505,11 +505,35 @@ suppression.
 
 **`setup/prepare-sd.sh`**
 - Rewrote pip install section: downloads all wheels on the HOST machine first
-  (`pip3 download --dest`), copies them into the chroot, then installs offline
-  with `--no-index --find-links`. All three packages and their deps are pure
-  Python (py3-none-any wheels) so no ARM compilation or Pi internet needed.
-  Falls back to network pip in QEMU chroot if host download fails.
+  (`pip3 download --dest --prefer-binary`), copies them into the chroot, then
+  installs offline with `--no-index --find-links`. All three packages and their
+  deps are pure Python (py3-none-any wheels) so no ARM compilation or Pi internet
+  needed. Falls back to network pip in QEMU chroot if host download fails.
   Removed `ghostpi-pip.service` — Pi requires zero internet access at any point.
+- Fixed chroot pip invocation: was `"${CHROOT[@]}" /bin/bash -c '...'` which
+  passes `/bin/bash` as a script filename argument to the bash already embedded
+  in CHROOT. Corrected to heredoc (`<< 'CHROOTEOF'`) matching the rest of the
+  script.
+- Fixed `cp -r "$WHEEL_DIR" dest` re-run safety: added `rm -rf` + `mkdir -p`
+  before copying wheels so repeated runs don't nest directories.
+- Added `sed -i "s|/home/admin/|/home/${PI_USER}/|g"` on both service files
+  after copy — hardcoded paths were wrong when `--user` != `admin`.
+
+**`setup/install.sh`**
+- Wrapped `pip3 install` with `set +e` / `set -e` so pip failure doesn't kill
+  the script silently — now reports a clear warning and continues.
+- Fixed step numbering gap (was 3→5, now 3→4→5→6→7→8).
+- Added `sed -i "s|/home/admin/ghostpi|${GHOSTPI_DIR}|g"` on both service files
+  after copy — paths now reflect actual install location regardless of username.
+
+**`setup/repair.sh`**
+- Same service-file path substitution fix added.
+
+**`ghostpi/display.py`**
+- `refresh()`: moved `EPD_AVAILABLE` check before `_render()`. Previously, if
+  PIL wasn't installed, `_render()` raised `NameError: name 'Image' is not
+  defined` every 30 s (caught by except, but logged as an error). Now returns
+  early cleanly in stub mode.
 
 ---
 

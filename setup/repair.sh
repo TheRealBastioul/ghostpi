@@ -191,6 +191,9 @@ ok "Log directories OK."
 info "Reinstalling systemd services..."
 cp "${GHOSTPI_DIR}/systemd/ghostpi.service"        /etc/systemd/system/ghostpi.service
 cp "${GHOSTPI_DIR}/systemd/ghostpi-splash.service" /etc/systemd/system/ghostpi-splash.service
+# Patch paths to match actual install location (in case user or path differs from default)
+sed -i "s|/home/admin/ghostpi|${GHOSTPI_DIR}|g" /etc/systemd/system/ghostpi.service
+sed -i "s|/home/admin/ghostpi|${GHOSTPI_DIR}|g" /etc/systemd/system/ghostpi-splash.service
 systemctl daemon-reload
 systemctl enable ghostpi.service
 systemctl enable ghostpi-splash.service

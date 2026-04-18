@@ -362,6 +362,7 @@ set +e
 pip3 download \
     --dest "$WHEEL_DIR" \
     --no-cache-dir \
+    --prefer-binary \
     adafruit-blinka \
     rpi-lgpio \
     adafruit-circuitpython-epd
@@ -372,22 +373,26 @@ if [[ $HOST_DL_EXIT -eq 0 && $(ls "$WHEEL_DIR" | wc -l) -gt 0 ]]; then
     WHEEL_COUNT="$(ls "$WHEEL_DIR" | wc -l)"
     ok "Downloaded $WHEEL_COUNT wheel(s) on host."
 
-    # Copy wheels into chroot temp dir and install offline (no network in chroot needed)
-    cp -r "$WHEEL_DIR" "$ROOT_DIR/tmp/ghostpi-wheels"
+    # Copy wheels into chroot /tmp (rm -rf first so re-runs don't nest directories)
+    rm -rf "$ROOT_DIR/tmp/ghostpi-wheels"
+    mkdir -p "$ROOT_DIR/tmp/ghostpi-wheels"
+    cp "$WHEEL_DIR"/* "$ROOT_DIR/tmp/ghostpi-wheels/"
     set +e
-    "${CHROOT[@]}" /bin/bash -c \
-        'pip3 install --break-system-packages --no-cache-dir --no-index \
-             --find-links=/tmp/ghostpi-wheels \
-             adafruit-blinka rpi-lgpio adafruit-circuitpython-epd'
+    "${CHROOT[@]}" << 'CHROOTEOF'
+pip3 install --break-system-packages --no-cache-dir --no-index \
+    --find-links=/tmp/ghostpi-wheels \
+    adafruit-blinka rpi-lgpio adafruit-circuitpython-epd
+CHROOTEOF
     PIP_EXIT=$?
     set -e
     rm -rf "$ROOT_DIR/tmp/ghostpi-wheels"
 else
     warn "Host-side pip download failed (exit $HOST_DL_EXIT) — falling back to pip in QEMU chroot."
     set +e
-    "${CHROOT[@]}" /bin/bash -c \
-        'pip3 install --break-system-packages --no-cache-dir \
-             adafruit-blinka rpi-lgpio adafruit-circuitpython-epd'
+    "${CHROOT[@]}" << 'CHROOTEOF'
+pip3 install --break-system-packages --no-cache-dir \
+    adafruit-blinka rpi-lgpio adafruit-circuitpython-epd
+CHROOTEOF
     PIP_EXIT=$?
     set -e
 fi
@@ -476,17 +481,19 @@ SYSTEMD_DIR="$ROOT_DIR/etc/systemd/system"
 WANTS_DIR="$SYSTEMD_DIR/multi-user.target.wants"
 mkdir -p "$WANTS_DIR"
 
-# GhostPi main service
+# GhostPi main service — substitute username into hardcoded paths
 cp "$REPO_DIR/systemd/ghostpi.service" "$SYSTEMD_DIR/ghostpi.service"
+sed -i "s|/home/admin/|/home/${PI_USER}/|g" "$SYSTEMD_DIR/ghostpi.service"
 ln -sf /etc/systemd/system/ghostpi.service \
        "$WANTS_DIR/ghostpi.service"
-ok "ghostpi.service installed and enabled."
+ok "ghostpi.service installed (user: $PI_USER)."
 
-# GhostPi boot splash service (draws to e-ink before main service starts)
+# GhostPi boot splash service
 cp "$REPO_DIR/systemd/ghostpi-splash.service" "$SYSTEMD_DIR/ghostpi-splash.service"
+sed -i "s|/home/admin/|/home/${PI_USER}/|g" "$SYSTEMD_DIR/ghostpi-splash.service"
 ln -sf /etc/systemd/system/ghostpi-splash.service \
        "$WANTS_DIR/ghostpi-splash.service"
-ok "ghostpi-splash.service installed and enabled."
+ok "ghostpi-splash.service installed."
 
 # dnsmasq — find the unit file in the rootfs and create the wants symlink
 DNSMASQ_UNIT=""

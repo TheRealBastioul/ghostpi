@@ -61,10 +61,17 @@ fi
 
 # ── 2. Python packages ────────────────────────────────────────────────────────
 log "Installing Python packages (adafruit-blinka, rpi-lgpio, adafruit-circuitpython-epd)..."
+set +e
 pip3 install --break-system-packages --no-cache-dir \
     adafruit-blinka \
     rpi-lgpio \
     adafruit-circuitpython-epd
+PIP_RC=$?
+set -e
+if [[ $PIP_RC -ne 0 ]]; then
+    warn "pip install failed (rc=$PIP_RC) — e-ink display will not work."
+    warn "Retry after ensuring internet access: sudo pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd"
+fi
 
 # ── 3. Boot partition config (config.txt + cmdline.txt) ──────────────────────
 log "Applying boot_config.txt settings..."
@@ -101,7 +108,7 @@ else
     log "cmdline.txt: USB OTG already configured"
 fi
 
-# ── 5. Static IP for usb0 (dhcpcd) ───────────────────────────────────────────
+# ── 4. Static IP for usb0 (dhcpcd) ───────────────────────────────────────────
 log "Configuring static IP for usb0 interface..."
 DHCPCD_CONF="/etc/dhcpcd.conf"
 
@@ -120,7 +127,7 @@ else
     log "usb0 already configured in ${DHCPCD_CONF}"
 fi
 
-# ── 6. dnsmasq for DHCP on usb0 ──────────────────────────────────────────────
+# ── 5. dnsmasq for DHCP on usb0 ──────────────────────────────────────────────
 # Provides the host PC with an IP in 192.168.7.0/24 automatically.
 # Note: hostapd is NOT needed for USB ethernet gadget networking.
 log "Configuring dnsmasq for USB DHCP..."
@@ -152,16 +159,19 @@ log "Creating log directories..."
 mkdir -p "${GHOSTPI_DIR}/logs/handshakes"
 chown -R "${GHOSTPI_USER}:${GHOSTPI_USER}" "${GHOSTPI_DIR}/logs" 2>/dev/null || true
 
-# ── 8. systemd services ───────────────────────────────────────────────────────
+# ── 7. systemd services ───────────────────────────────────────────────────────
 log "Installing GhostPi systemd services..."
 cp "${GHOSTPI_DIR}/systemd/ghostpi.service"        /etc/systemd/system/ghostpi.service
 cp "${GHOSTPI_DIR}/systemd/ghostpi-splash.service" /etc/systemd/system/ghostpi-splash.service
+# Patch paths in case user isn't 'admin' or repo is in a non-default location
+sed -i "s|/home/admin/ghostpi|${GHOSTPI_DIR}|g" /etc/systemd/system/ghostpi.service
+sed -i "s|/home/admin/ghostpi|${GHOSTPI_DIR}|g" /etc/systemd/system/ghostpi-splash.service
 systemctl daemon-reload
 systemctl enable ghostpi.service
 systemctl enable ghostpi-splash.service
 log "ghostpi.service and ghostpi-splash.service enabled."
 
-# ── 9. Verify aircrack-ng ─────────────────────────────────────────────────────
+# ── 8. Verify aircrack-ng ─────────────────────────────────────────────────────
 log "Verifying aircrack-ng suite..."
 for tool in airmon-ng airodump-ng aireplay-ng aircrack-ng; do
     if command -v "${tool}" &>/dev/null; then
