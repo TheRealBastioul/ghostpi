@@ -65,7 +65,7 @@ WEBUI_PORT = 80
 CHANNEL_HOP_INTERVAL = None
 
 # How many recent probe requests to keep in memory per station.
-MAX_PROBES_PER_STA = 20
+MAX_PROBES_PER_STA = 10
 
 # ── Deauth settings (active mode only) ───────────────────────────────────────
 # Number of deauth frames per burst.  Keep low to avoid detection.

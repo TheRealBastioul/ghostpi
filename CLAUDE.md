@@ -319,3 +319,54 @@ ARMv6 core, crashing the watchdog and taking down display and Flask with it.
 - `/api/status` now includes `capture_running` field.
 - Added `POST /api/capture/start` and `POST /api/capture/stop` endpoints so
   the web dashboard can trigger capture without a physical button press.
+
+---
+
+### 2026-04-18 (session 5)
+
+**CPU/RAM optimisation + display crash-hardening**
+
+**`ghostpi/config.py`**
+- `MAX_PROBES_PER_STA`: 20 → 10 (halves probe RAM, bounded by construction)
+
+**`ghostpi/capture.py`**
+- `time.sleep(DISPLAY_REFRESH_INTERVAL)` in parse loop → `_stop_event.wait(timeout=…)`:
+  `stop_capture()` now unblocks immediately instead of waiting up to 30 s.
+- `_find_csv()`: `glob.glob()` called only once per capture session; path cached
+  in `self._csv_path` after first successful find. No more per-cycle filesystem
+  glob.
+- `_publish_state()`: removed `dict(self._networks)` and `dict(self._clients)`
+  shallow copies — stored references directly in shared state. Flask
+  deep-copies under the lock in `_safe_state_copy`; the intermediate shallow
+  copies were wasted allocations every 30 s.
+- Reset `_csv_path = None` in `start_capture()` so a new capture run starts
+  fresh.
+
+**`ghostpi/display.py`**
+- `refresh()`: consolidated `_render()` call and SPI I/O inside a single
+  top-level `try/except`. Previously `_render()` was called before the
+  try block — any PIL exception killed the display thread permanently.
+  Now the method truly never raises.
+- `_run()`: replaced single-level loop with outer try/except so any unexpected
+  exception sleeps 5 s and continues instead of exiting the thread. The
+  display thread is now unkillable by any Python exception.
+
+**`ghostpi/main.py`**
+- Removed unused `import time` (left over from old `time.sleep(1)` main loop).
+- Flask `threaded=True` → `threaded=False`: no per-request thread is spawned;
+  requests queue and are served sequentially. Appropriate for a single
+  operator; eliminates thread creation overhead on every HTTP request.
+- `_watchdog()`: if the display thread dies despite the hardening above,
+  the watchdog resets `_stop_event` and calls `display.start()` to restart it.
+
+**`ghostpi/webui/templates/index.html`**
+- `fetchAll()` consolidated from 5 parallel HTTP requests (`/api/status`,
+  `/api/networks`, `/api/clients`, `/api/probes`, `/api/pcaps`) to a single
+  `/api/data` call every 30 s (matches capture parse interval — data doesn't
+  change faster). PCAP list fetched separately every 60 s (files rarely change).
+  Result: from ~5 Flask invocations/15 s to ~1/30 s + 1/60 s.
+- JS converts dict format from `/api/data` to sorted arrays client-side
+  (networks sorted by power, probes flattened from MAC→[essid] dict).
+- Added capture Start/Stop button in the header; calls `/api/capture/start`
+  or `/api/capture/stop` and reflects live `capture_running` state with
+  colour change.

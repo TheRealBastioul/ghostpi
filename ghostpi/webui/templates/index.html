@@ -154,6 +154,25 @@
     font-size: 0.65rem;
   }
 
+  /* ── Capture button ─────────────────────────────────────────────────────── */
+  #capture-btn {
+    padding: 4px 14px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 1px;
+    border: 1px solid var(--green);
+    background: #1a3a1a;
+    color: var(--green);
+  }
+  #capture-btn.recording {
+    border-color: var(--red);
+    background: #3a1a1a;
+    color: var(--red);
+  }
+
   /* ── Footer ─────────────────────────────────────────────────────────────── */
   footer {
     text-align: center;
@@ -171,6 +190,7 @@
 <header>
   <h1>&#9650; GhostPi</h1>
   <div style="display:flex;align-items:center;gap:10px;">
+    <button id="capture-btn" onclick="toggleCapture()">START CAPTURE</button>
     <span id="mode-badge" class="badge-passive">PASSIVE</span>
     <span id="clock" style="color:var(--dim);font-size:0.75rem;"></span>
   </div>
@@ -262,7 +282,7 @@
 
 <footer>
   GhostPi &mdash; for authorized security assessments only &mdash;
-  auto-refresh every 15&thinsp;s &mdash;
+  auto-refresh every 30&thinsp;s &mdash;
   <a href="/api/data">raw JSON</a>
 </footer>
 
@@ -271,12 +291,12 @@
 
 let selectedBssid = null;
 let activeEnabled = false;
+let captureRunning = false;
 
-// ── Clock ──────────────────────────────────────────────────────────────────
+// ── Clock (client-side only, no server requests) ───────────────────────────
 function tickClock() {
-  const now = new Date();
   document.getElementById("clock").textContent =
-    now.toTimeString().slice(0, 8);
+    new Date().toTimeString().slice(0, 8);
 }
 tickClock();
 setInterval(tickClock, 1000);
@@ -287,7 +307,6 @@ function esc(s) {
     .replace(/&/g,"&amp;").replace(/</g,"&lt;")
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
-
 function encClass(privacy) {
   const p = String(privacy).toUpperCase();
   if (p.includes("WPA2")) return "enc-WPA2";
@@ -296,60 +315,73 @@ function encClass(privacy) {
   if (p.includes("OPN") || p === "") return "enc-OPN";
   return "";
 }
+function parsePower(p) { return parseInt(p) || -999; }
 
-// ── Fetch & render ──────────────────────────────────────────────────────────
+// ── Single fetch from /api/data ────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [statusRes, netsRes, cliRes, probeRes, pcapRes] = await Promise.all([
-      fetch("/api/status"),
-      fetch("/api/networks"),
-      fetch("/api/clients"),
-      fetch("/api/probes"),
-      fetch("/api/pcaps"),
-    ]);
+    const data = await fetch("/api/data").then(r => r.json());
 
-    const status = await statusRes.json();
-    const nets   = await netsRes.json();
-    const clis   = await cliRes.json();
-    const probes = await probeRes.json();
-    const pcaps  = await pcapRes.json();
+    activeEnabled  = !!data.active_mode_enabled;
+    captureRunning = !!data.capture_running;
 
-    renderStatus(status);
-    renderNetworks(nets, status);
-    renderClients(clis);
+    // Update status bar and stats strip
+    document.getElementById("status-bar").textContent = data.status_message || "Running";
+    document.getElementById("s-nets").textContent    = data.network_count    || 0;
+    document.getElementById("s-clients").textContent = data.client_count     || 0;
+    document.getElementById("s-probes").textContent  = data.probe_count      || 0;
+    document.getElementById("s-hs").textContent      = data.handshake_count  || 0;
+
+    const badge = document.getElementById("mode-badge");
+    const mode  = (data.mode || "passive").toLowerCase();
+    badge.textContent = mode.toUpperCase();
+    badge.className   = "badge-" + mode;
+
+    document.getElementById("active-locked").style.display =
+      (!activeEnabled) ? "block" : "none";
+
+    // Capture button
+    const btn = document.getElementById("capture-btn");
+    if (captureRunning) {
+      btn.textContent = "STOP CAPTURE";
+      btn.classList.add("recording");
+    } else {
+      btn.textContent = "START CAPTURE";
+      btn.classList.remove("recording");
+    }
+
+    // Networks (dict → sorted array)
+    const nets = Object.values(data.networks || {})
+      .sort((a, b) => parsePower(b.power) - parsePower(a.power));
+    renderNetworks(nets);
+
+    // Clients (dict → array)
+    renderClients(Object.values(data.clients || {}));
+
+    // Probes (dict of mac→[essid] → flat array)
+    const probes = Object.entries(data.probes || {})
+      .flatMap(([mac, essids]) => (essids || []).map(e => ({mac, essid: e})));
     renderProbes(probes);
-    renderPcaps(pcaps);
+
   } catch(e) {
     document.getElementById("status-bar").textContent = "Connection error: " + e.message;
   }
 }
 
-function renderStatus(s) {
-  activeEnabled = !!s.active_enabled;
-
-  document.getElementById("status-bar").textContent = s.status_message || "Running";
-  document.getElementById("s-nets").textContent    = s.network_count    || 0;
-  document.getElementById("s-clients").textContent = s.client_count     || 0;
-  document.getElementById("s-probes").textContent  = s.probe_count      || 0;
-  document.getElementById("s-hs").textContent      = s.handshake_count  || 0;
-
-  const badge = document.getElementById("mode-badge");
-  const mode  = (s.mode || "passive").toLowerCase();
-  badge.textContent = mode.toUpperCase();
-  badge.className   = "badge-" + mode;
-
-  document.getElementById("active-locked").style.display =
-    (!activeEnabled) ? "block" : "none";
+// PCAP list fetched separately and less often (files change slowly)
+async function fetchPcaps() {
+  try {
+    const pcaps = await fetch("/api/pcaps").then(r => r.json());
+    renderPcaps(pcaps);
+  } catch(e) { /* non-critical */ }
 }
 
-function renderNetworks(nets, status) {
-  // Build a client-count map from state (we re-fetch clients separately)
+function renderNetworks(nets) {
   const tbody = document.getElementById("net-tbody");
   if (!nets.length) {
     tbody.innerHTML = `<tr><td colspan="6" style="color:var(--dim);text-align:center;padding:20px;">No networks observed yet</td></tr>`;
     return;
   }
-
   tbody.innerHTML = nets.map(n => {
     const bssid    = esc(n.bssid || "");
     const essid    = n.essid ? esc(n.essid) : `<span style="color:var(--dim)">&lt;hidden&gt;</span>`;
@@ -358,17 +390,12 @@ function renderNetworks(nets, status) {
     const pwr      = esc(n.power || "?");
     const eClass   = encClass(n.privacy);
     const isSelected = (bssid === selectedBssid);
-
     const selectBtn = activeEnabled
       ? `<button class="btn-select ${isSelected ? "selected" : ""}"
            onclick="selectTarget('${bssid}')">${isSelected ? "&#9654; Target" : "Select"}</button>`
       : "";
-
     return `<tr>
-      <td>
-        <div class="essid">${essid}</div>
-        <div class="bssid">${bssid}</div>
-      </td>
+      <td><div class="essid">${essid}</div><div class="bssid">${bssid}</div></td>
       <td>${ch}</td>
       <td><span class="${eClass}">${privacy}</span></td>
       <td class="pwr">${pwr} dBm</td>
@@ -420,18 +447,23 @@ async function selectTarget(bssid) {
   if (!activeEnabled) return;
   try {
     const res = await fetch(`/api/select/${encodeURIComponent(bssid)}`, { method: "POST" });
-    if (res.ok) {
-      selectedBssid = bssid;
-      await fetchAll();
-    }
-  } catch(e) {
-    console.error("Select target failed:", e);
-  }
+    if (res.ok) { selectedBssid = bssid; fetchAll(); }
+  } catch(e) { console.error("Select target failed:", e); }
 }
 
-// Initial fetch + auto-refresh every 15 s
+async function toggleCapture() {
+  const endpoint = captureRunning ? "/api/capture/stop" : "/api/capture/start";
+  try {
+    await fetch(endpoint, { method: "POST" });
+    fetchAll();
+  } catch(e) { console.error("Capture toggle failed:", e); }
+}
+
+// Initial load + auto-refresh
 fetchAll();
-setInterval(fetchAll, 15000);
+fetchPcaps();
+setInterval(fetchAll, 30000);
+setInterval(fetchPcaps, 60000);
 </script>
 </body>
 </html>

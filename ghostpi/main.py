@@ -18,7 +18,6 @@ import os
 import signal
 import sys
 import threading
-import time
 
 # ── Logging setup (before any imports that might log) ─────────────────────────
 logging.basicConfig(
@@ -120,7 +119,7 @@ class GhostPi:
                 port=WEBUI_PORT,
                 debug=False,
                 use_reloader=False,
-                threaded=True,
+                threaded=False,   # single-threaded: no per-request thread spawning
             )
 
         self._flask_thread = threading.Thread(
@@ -176,17 +175,21 @@ class GhostPi:
             self.stop()
 
     def _watchdog(self):
-        """Log a warning if any critical non-capture thread has died."""
-        # Capture thread is optional — only warn if user explicitly started it
+        """Log warnings, restart display if dead, check capture only when user-started."""
         with self._lock:
             capture_should_run = self._state.get("capture_running", False)
 
         if capture_should_run and not self._capture.is_running():
             log.error("WATCHDOG: capture thread died unexpectedly")
 
-        for name, thread in (("display", self._display._thread), ("webui", self._flask_thread)):
-            if thread and not thread.is_alive():
-                log.error("WATCHDOG: thread '%s' has died", name)
+        # Display thread must always be running — restart if it somehow died
+        if self._display._thread and not self._display._thread.is_alive():
+            log.error("WATCHDOG: display thread died — restarting")
+            self._display._stop_event.clear()
+            self._display.start()
+
+        if self._flask_thread and not self._flask_thread.is_alive():
+            log.error("WATCHDOG: webui thread has died")
 
     def stop(self):
         """Gracefully shut down all components."""

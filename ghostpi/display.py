@@ -207,20 +207,18 @@ class DisplayManager:
         """
         self._refresh_requested.set()
 
-    def refresh(self, force: bool = False):
-        """Push the current state to the e-ink panel."""
-        with self._lock:
-            snapshot = dict(self._state)
-
-        image = self._render(snapshot)
-
-        if not EPD_AVAILABLE or self._epd is None:
-            log.debug("Display stub: would refresh now (mode=%s)", snapshot.get("mode"))
-            return
-
+    def refresh(self):
+        """Push the current state to the e-ink panel. Never raises."""
         try:
-            # Crop the canvas back to visible height before sending to driver.
-            # The driver expects DISPLAY_HEIGHT rows; we strip the offset padding.
+            with self._lock:
+                snapshot = dict(self._state)
+
+            image = self._render(snapshot)
+
+            if not EPD_AVAILABLE or self._epd is None:
+                log.debug("Display stub: would refresh (mode=%s)", snapshot.get("mode"))
+                return
+
             visible = image.crop((0, DISPLAY_Y_OFFSET,
                                   DISPLAY_WIDTH, DISPLAY_Y_OFFSET + DISPLAY_HEIGHT))
             self._epd.image(visible)
@@ -233,16 +231,17 @@ class DisplayManager:
     # ── Thread lifecycle ──────────────────────────────────────────────────────
 
     def _run(self):
-        """Background loop: refresh on interval or when request_refresh() is called."""
-        self.refresh()
+        """Background loop: unkillable — any exception is logged and the loop continues."""
         while not self._stop_event.is_set():
-            # Block until a button signals request_refresh() or the interval fires.
-            # This replaces the old 5 s polling loop — no unnecessary wake-ups.
-            self._refresh_requested.wait(timeout=DISPLAY_REFRESH_INTERVAL)
-            if self._stop_event.is_set():
-                break
-            self._refresh_requested.clear()
-            self.refresh()
+            try:
+                self.refresh()
+                self._refresh_requested.wait(timeout=DISPLAY_REFRESH_INTERVAL)
+                if self._stop_event.is_set():
+                    break
+                self._refresh_requested.clear()
+            except Exception as exc:
+                log.error("Display loop unexpected error: %s", exc)
+                time.sleep(5)
 
     def start(self):
         """Start the display refresh thread."""

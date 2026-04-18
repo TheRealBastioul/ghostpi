@@ -53,6 +53,9 @@ class CaptureDaemon:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         self._session_prefix = f"{CAPTURE_PREFIX}-{ts}"
 
+        # Cached CSV path — glob is only needed once per session
+        self._csv_path: str | None = None
+
         # In-memory parsed state
         self._networks: dict[str, dict] = {}   # keyed by BSSID
         self._clients: dict[str, dict]  = {}   # keyed by station MAC
@@ -138,10 +141,13 @@ class CaptureDaemon:
     # ── CSV parsing ───────────────────────────────────────────────────────────
 
     def _find_csv(self) -> str | None:
-        """Return the path to the most recent airodump-ng CSV for this session."""
-        pattern = f"{self._session_prefix}-*.csv"
-        files = sorted(glob.glob(pattern))
-        return files[-1] if files else None
+        """Return the CSV path for this session, caching after first discovery."""
+        if self._csv_path:
+            return self._csv_path
+        files = sorted(glob.glob(f"{self._session_prefix}-*.csv"))
+        if files:
+            self._csv_path = files[-1]
+        return self._csv_path
 
     def _parse_csv(self, csv_path: str):
         """
@@ -281,19 +287,22 @@ class CaptureDaemon:
         # Trigger async recount (returns immediately; updates self._hs_count in bg)
         self._update_handshakes_async()
 
+        # Convert deques to lists once per cycle (needed for JSON serialisation)
+        probes_snapshot = {k: list(v) for k, v in self._probes.items()}
+
         with self._lock:
             self._state["network_count"]   = len(self._networks)
             self._state["client_count"]    = len(self._clients)
             self._state["probe_count"]     = all_probes
             self._state["handshake_count"] = self._hs_count
             self._state["last_essid"]      = last_essid
-            self._state["networks"]        = dict(self._networks)
-            self._state["clients"]         = dict(self._clients)
-            # Convert deques to plain lists for JSON serialisation
-            self._state["probes"]          = {k: list(v) for k, v in self._probes.items()}
+            # Store references — Flask deep-copies under the lock in _safe_state_copy
+            self._state["networks"]        = self._networks
+            self._state["clients"]         = self._clients
+            self._state["probes"]          = probes_snapshot
             self._state["session_prefix"]  = self._session_prefix
             self._state["status_message"]  = (
-                f"Monitoring {MON_INTERFACE} | "
+                f"Capturing on {MON_INTERFACE} | "
                 f"{len(self._networks)} nets, {len(self._clients)} clients"
             )
 
@@ -315,7 +324,10 @@ class CaptureDaemon:
 
         try:
             while not self._stop_event.is_set():
-                time.sleep(DISPLAY_REFRESH_INTERVAL)
+                # wait() wakes immediately on stop_capture(), unlike time.sleep()
+                self._stop_event.wait(timeout=DISPLAY_REFRESH_INTERVAL)
+                if self._stop_event.is_set():
+                    break
 
                 csv_path = self._find_csv()
                 if csv_path:
@@ -349,6 +361,7 @@ class CaptureDaemon:
             return
         self._stop_event.clear()
         self._restart_count = 0
+        self._csv_path = None   # reset cache for new capture run
         with self._lock:
             self._state["capture_running"] = True
             self._state["status_message"] = "Starting capture..."
