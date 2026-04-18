@@ -146,7 +146,8 @@ class DisplayManager:
         font_med = self._font_md  or self._load_font(11)
         font_lg  = self._font_lg  or self._load_font(14)
 
-        mode        = state_snapshot.get("mode", MODE_PASSIVE)
+        mode            = state_snapshot.get("mode", MODE_PASSIVE)
+        capture_running = state_snapshot.get("capture_running", False)
         net_count   = state_snapshot.get("network_count", 0)
         cli_count   = state_snapshot.get("client_count", 0)
         probe_count = state_snapshot.get("probe_count", 0)
@@ -163,6 +164,8 @@ class DisplayManager:
             mode_label += " LOCKED"
         draw.text((4, self._y(1)), "GhostPi", font=font_lg, fill=1)
         draw.text((DISPLAY_WIDTH - 80, self._y(3)), mode_label, font=font_sm, fill=1)
+        if capture_running:
+            draw.text((DISPLAY_WIDTH - 26, self._y(3)), "REC", font=font_sm, fill=1)
 
         # ── Separator ─────────────────────────────────────────────────────────
         draw.line([(0, self._y(14)), (DISPLAY_WIDTH - 1, self._y(14))], fill=0)

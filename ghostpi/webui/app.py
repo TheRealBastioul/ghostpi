@@ -30,13 +30,15 @@ log = logging.getLogger(__name__)
 # These are injected by create_app()
 _state: dict = {}
 _lock: threading.Lock = threading.Lock()
+_capture = None   # CaptureDaemon, injected by create_app()
 
 
-def create_app(state: dict, state_lock: threading.Lock) -> Flask:
+def create_app(state: dict, state_lock: threading.Lock, capture_daemon=None) -> Flask:
     """Factory: wire shared state into the Flask app."""
-    global _state, _lock
+    global _state, _lock, _capture
     _state = state
     _lock  = state_lock
+    _capture = capture_daemon
 
     app = Flask(__name__, template_folder="templates")
     app.config["MAX_CONTENT_LENGTH"] = 0   # read-only UI, no uploads
@@ -100,14 +102,33 @@ def _register_routes(app: Flask):
     def api_status():
         with _lock:
             return jsonify({
-                "mode":           _state.get("mode", "passive"),
-                "status_message": _state.get("status_message", ""),
-                "network_count":  _state.get("network_count", 0),
-                "client_count":   _state.get("client_count", 0),
-                "probe_count":    _state.get("probe_count", 0),
-                "handshake_count":_state.get("handshake_count", 0),
-                "active_enabled": _state.get("active_mode_enabled", False),
+                "mode":            _state.get("mode", "passive"),
+                "status_message":  _state.get("status_message", ""),
+                "network_count":   _state.get("network_count", 0),
+                "client_count":    _state.get("client_count", 0),
+                "probe_count":     _state.get("probe_count", 0),
+                "handshake_count": _state.get("handshake_count", 0),
+                "active_enabled":  _state.get("active_mode_enabled", False),
+                "capture_running": _state.get("capture_running", False),
             })
+
+    @app.post("/api/capture/start")
+    def api_capture_start():
+        if _capture is None:
+            return jsonify({"error": "capture not available"}), 503
+        if _capture.is_running():
+            return jsonify({"status": "already running"})
+        _capture.start_capture()
+        return jsonify({"status": "started"})
+
+    @app.post("/api/capture/stop")
+    def api_capture_stop():
+        if _capture is None:
+            return jsonify({"error": "capture not available"}), 503
+        if not _capture.is_running():
+            return jsonify({"status": "not running"})
+        _capture.stop_capture()
+        return jsonify({"status": "stopped"})
 
     # ── File download ─────────────────────────────────────────────────────────
 

@@ -308,6 +308,7 @@ class CaptureDaemon:
         if not self._start_monitor_mode():
             with self._lock:
                 self._state["status_message"] = "ERROR: monitor mode failed"
+                self._state["capture_running"] = False
             return
 
         self._start_airodump()
@@ -323,32 +324,57 @@ class CaptureDaemon:
                 else:
                     log.debug("No CSV yet, waiting...")
 
-                # Restart airodump-ng if it died unexpectedly (with backoff)
+                # Do NOT auto-restart on unexpected exit — let the user re-trigger
                 if self._proc and self._proc.poll() is not None:
-                    self._restart_count += 1
-                    delay = min(5 * self._restart_count, 60)
-                    log.warning(
-                        "airodump-ng exited unexpectedly (restart #%d, waiting %ds)",
-                        self._restart_count, delay,
-                    )
-                    time.sleep(delay)
-                    self._start_airodump()
+                    log.warning("airodump-ng exited unexpectedly — stopping capture")
+                    break
 
         finally:
             self._stop_airodump()
             self._stop_monitor_mode()
+            with self._lock:
+                self._state["capture_running"] = False
+                if not self._stop_event.is_set():
+                    # Exited due to airodump crash, not user request
+                    self._state["status_message"] = "Capture stopped (press ACTION to restart)"
 
     def start(self):
-        """Start the capture daemon thread."""
+        """Prepare the daemon — capture does NOT start until start_capture() is called."""
+        log.info("Capture daemon ready (session prefix: %s)", self._session_prefix)
+
+    def start_capture(self):
+        """Start monitor mode and airodump-ng. Called when user presses ACTION in passive mode."""
+        if self.is_running():
+            log.info("Capture already running")
+            return
+        self._stop_event.clear()
+        self._restart_count = 0
+        with self._lock:
+            self._state["capture_running"] = True
+            self._state["status_message"] = "Starting capture..."
         self._thread = threading.Thread(target=self._run, name="capture", daemon=True)
         self._thread.start()
-        log.info("Capture daemon started (session: %s)", self._session_prefix)
+        log.info("Capture started by user (session: %s)", self._session_prefix)
+
+    def stop_capture(self):
+        """Stop airodump-ng and return to managed mode. Called when user presses ACTION again."""
+        if not self.is_running():
+            return
+        self._stop_event.set()
+        if hasattr(self, "_thread") and self._thread.is_alive():
+            self._thread.join(timeout=20)
+        with self._lock:
+            self._state["capture_running"] = False
+            self._state["status_message"] = "Capture stopped"
+        log.info("Capture stopped by user")
+
+    def is_running(self) -> bool:
+        """Return True if the capture thread is alive."""
+        return getattr(self, "_thread", None) is not None and self._thread.is_alive()
 
     def stop(self):
-        """Signal the capture daemon to stop."""
-        self._stop_event.set()
-        if hasattr(self, "_thread"):
-            self._thread.join(timeout=20)
+        """Graceful shutdown (called by GhostPi.stop())."""
+        self.stop_capture()
         log.info("Capture daemon stopped")
 
     # ── Public accessors (for web UI) ─────────────────────────────────────────

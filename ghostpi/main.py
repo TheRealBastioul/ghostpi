@@ -65,6 +65,9 @@ def build_initial_state() -> dict:
         # Current operating mode
         "mode":             MODE_PASSIVE,
 
+        # Capture on/off (toggled by GPIO 6 in passive mode)
+        "capture_running":  False,
+
         # Counters (updated by capture daemon)
         "network_count":    0,
         "client_count":     0,
@@ -77,7 +80,7 @@ def build_initial_state() -> dict:
         "probes":           {},
 
         # Display status line
-        "status_message":   "Starting up...",
+        "status_message":   "GhostPi Ready",
         "last_essid":       "",
 
         # Active mode state
@@ -97,8 +100,10 @@ class GhostPi:
         # Components
         self._capture = CaptureDaemon(self._state, self._lock)
         self._display = DisplayManager(self._state, self._lock)
-        self._buttons = ButtonHandler(self._state, self._lock, self._display)
-        self._flask_app = create_app(self._state, self._lock)
+        self._buttons = ButtonHandler(
+            self._state, self._lock, self._display, self._capture
+        )
+        self._flask_app = create_app(self._state, self._lock, self._capture)
 
         self._flask_thread: threading.Thread | None = None
         self._running = True
@@ -148,12 +153,12 @@ class GhostPi:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT,  self._handle_signal)
 
-        self._capture.start()
+        self._capture.start()   # ready state only — capture starts on user button press
         self._display.start()
         self._buttons.start()
         self._start_flask()
 
-        log.info("All components started")
+        log.info("All components started — press ACTION (GPIO 6) to begin capture")
 
     def run(self):
         """Block until a stop signal is received."""
@@ -171,13 +176,15 @@ class GhostPi:
             self.stop()
 
     def _watchdog(self):
-        """Log a warning if any critical thread has died unexpectedly."""
-        watched = {
-            "capture": getattr(self._capture, "_thread", None),
-            "display": self._display._thread,
-            "webui":   self._flask_thread,
-        }
-        for name, thread in watched.items():
+        """Log a warning if any critical non-capture thread has died."""
+        # Capture thread is optional — only warn if user explicitly started it
+        with self._lock:
+            capture_should_run = self._state.get("capture_running", False)
+
+        if capture_should_run and not self._capture.is_running():
+            log.error("WATCHDOG: capture thread died unexpectedly")
+
+        for name, thread in (("display", self._display._thread), ("webui", self._flask_thread)):
             if thread and not thread.is_alive():
                 log.error("WATCHDOG: thread '%s' has died", name)
 

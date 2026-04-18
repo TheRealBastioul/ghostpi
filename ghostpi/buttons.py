@@ -50,16 +50,19 @@ class ButtonHandler:
         state: dict,
         state_lock: threading.Lock,
         display_manager=None,
+        capture_daemon=None,
     ):
         """
         Args:
             state:           Shared application state dict.
             state_lock:      Lock protecting state.
             display_manager: DisplayManager instance for forced refreshes.
+            capture_daemon:  CaptureDaemon instance for start/stop capture.
         """
         self._state   = state
         self._lock    = state_lock
         self._display = display_manager
+        self._capture = capture_daemon
 
         # Review mode: index into the network list for paging
         self._review_index = 0
@@ -123,7 +126,7 @@ class ButtonHandler:
             current_mode = self._state.get("mode", MODE_PASSIVE)
 
         if current_mode == MODE_PASSIVE:
-            self._action_passive_refresh()
+            self._action_toggle_capture()
         elif current_mode == MODE_ACTIVE:
             self._action_active_deauth()
         elif current_mode == MODE_REVIEW:
@@ -131,11 +134,17 @@ class ButtonHandler:
 
     # ── Mode-specific actions ─────────────────────────────────────────────────
 
-    def _action_passive_refresh(self):
-        """Force an immediate e-ink display refresh (passive mode)."""
-        log.info("Forced display refresh requested")
-        with self._lock:
-            self._state["status_message"] = "Manual refresh..."
+    def _action_toggle_capture(self):
+        """Toggle passive capture on/off (GPIO 6 in passive mode)."""
+        if self._capture is None:
+            log.warning("No capture daemon available")
+            return
+        if self._capture.is_running():
+            log.info("User stopped capture")
+            self._capture.stop_capture()
+        else:
+            log.info("User started capture")
+            self._capture.start_capture()
         if self._display:
             self._display.request_refresh()
 

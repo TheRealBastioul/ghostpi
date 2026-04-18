@@ -271,3 +271,51 @@ thread-safety issues on the constrained single-core ARMv6 hardware.
   with exact commands to fix them on the Pi after first boot.
 - README Method A instructions rewritten for new users: step-by-step format,
   `lsblk` output explained, auto-mount behaviour clarified, username warning.
+
+---
+
+### 2026-04-18 (session 4)
+
+**On-demand capture — display and web UI survive independently of airmon-ng**
+
+Root cause: airmon-ng/airodump-ng auto-starting on boot saturated the single
+ARMv6 core, crashing the watchdog and taking down display and Flask with it.
+
+**`ghostpi/capture.py`**
+- `start()` is now a no-op (logs "ready") — no monitor mode or airodump-ng
+  is launched at boot.
+- Added `start_capture()`: resets stop event, sets `capture_running=True` in
+  shared state, spawns capture thread. Safe to call repeatedly.
+- Added `stop_capture()`: sets stop event, joins thread, sets
+  `capture_running=False`. Called by button handler and on shutdown.
+- Added `is_running()`: returns True if capture thread is alive.
+- Removed auto-restart on airodump-ng unexpected exit — crashes log a warning
+  and exit cleanly with a "press ACTION to restart" status message. Prevents
+  the old CPU thrash loop where crashes triggered immediate restarts.
+- `_run()` finally block always clears `capture_running` in shared state.
+
+**`ghostpi/buttons.py`**
+- Constructor gains `capture_daemon` parameter (wired from main.py).
+- GPIO 6 in passive mode: was `_action_passive_refresh()` (display refresh
+  only), now `_action_toggle_capture()` — starts capture if idle, stops it
+  if running. Display refresh follows automatically.
+
+**`ghostpi/main.py`**
+- `build_initial_state()`: added `capture_running: False`; initial
+  `status_message` changed from `"Starting up..."` to `"GhostPi Ready"` so
+  the display shows a clean idle state before any capture is triggered.
+- `ButtonHandler` construction now passes `self._capture` as `capture_daemon`.
+- `create_app()` now passes `self._capture` so web UI routes can reach it.
+- `_watchdog()`: rewritten to only check capture thread if `capture_running`
+  is True in shared state. Display and Flask threads still always monitored.
+
+**`ghostpi/display.py`**
+- `_render()`: reads `capture_running` from state snapshot; when True, draws
+  a small `"REC"` label in the header bar (white text, inverted background).
+
+**`ghostpi/webui/app.py`**
+- `create_app()` accepts optional `capture_daemon` parameter; stored in
+  module-level `_capture`.
+- `/api/status` now includes `capture_running` field.
+- Added `POST /api/capture/start` and `POST /api/capture/stop` endpoints so
+  the web dashboard can trigger capture without a physical button press.
