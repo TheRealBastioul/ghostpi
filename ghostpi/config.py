@@ -57,7 +57,7 @@ MODE_REVIEW  = "review"    # browse captured data on e-ink display
 MODES = [MODE_PASSIVE, MODE_ACTIVE, MODE_REVIEW]
 
 # ── Web UI ────────────────────────────────────────────────────────────────────
-WEBUI_HOST = "192.168.7.1"   # USB gadget (usb0) interface IP
+WEBUI_HOST = "0.0.0.0"   # USB gadget (usb0) interface IP
 WEBUI_PORT = 80
 
 # ── Capture settings ──────────────────────────────────────────────────────────
