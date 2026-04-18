@@ -442,11 +442,17 @@ SYSTEMD_DIR="$ROOT_DIR/etc/systemd/system"
 WANTS_DIR="$SYSTEMD_DIR/multi-user.target.wants"
 mkdir -p "$WANTS_DIR"
 
-# GhostPi service
+# GhostPi main service
 cp "$REPO_DIR/systemd/ghostpi.service" "$SYSTEMD_DIR/ghostpi.service"
 ln -sf /etc/systemd/system/ghostpi.service \
        "$WANTS_DIR/ghostpi.service"
 ok "ghostpi.service installed and enabled."
+
+# GhostPi boot splash service (draws to e-ink before main service starts)
+cp "$REPO_DIR/systemd/ghostpi-splash.service" "$SYSTEMD_DIR/ghostpi-splash.service"
+ln -sf /etc/systemd/system/ghostpi-splash.service \
+       "$WANTS_DIR/ghostpi-splash.service"
+ok "ghostpi-splash.service installed and enabled."
 
 # dnsmasq — find the unit file in the rootfs and create the wants symlink
 DNSMASQ_UNIT=""

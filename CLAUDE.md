@@ -385,6 +385,36 @@ Root causes identified:
   `adafruit_circuitpython_epd` (pip package name) instead of `adafruit_epd`
   (actual import name). Now checks `adafruit_epd`, `flask`, `RPi`, `PIL`.
 
+---
+
+### 2026-04-18 (session 7)
+
+**Boot splash: e-ink shows "GhostPi — Booting" before main service starts**
+
+**`ghostpi/splash.py` (new)**
+- Standalone one-shot script that draws a boot screen to the SSD1680 and
+  exits. Inlines all config constants — no import dependency on the rest of
+  GhostPi. Any exception (missing library, SPI not ready) exits cleanly with
+  a log message; the script never blocks or crashes the boot process.
+- Renders: inverted header ("GhostPi | BOOTING"), "Initialising..." body,
+  instruction text ("Web UI starts after button press (GPIO6)"), SSH hint
+  ("SSH: 192.168.7.1 (usb0)").
+
+**`systemd/ghostpi-splash.service` (new)**
+- `Type=oneshot` — runs once and exits.
+- `After=local-fs.target Before=ghostpi.service` — filesystems mounted,
+  Python/fonts readable, runs before the main service.
+- `Restart=no` — never restarts; a failed draw is non-fatal.
+- `TimeoutStartSec=30` — generous allowance for slow first-boot SPI init.
+
+**`setup/repair.sh`**
+- Installs and enables `ghostpi-splash.service` alongside `ghostpi.service`.
+- Status display now shows `ghostpi-splash` enabled/disabled state.
+
+**`setup/prepare-sd.sh`**
+- Copies and symlinks `ghostpi-splash.service` into the rootfs
+  `multi-user.target.wants/` alongside the main service.
+
 **CPU/RAM optimisation + display crash-hardening**
 
 **`ghostpi/config.py`**

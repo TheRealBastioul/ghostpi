@@ -55,6 +55,10 @@ print_status() {
         fail "ghostpi.service   : $svc_state / $svc_enabled"
     fi
 
+    local splash_enabled
+    splash_enabled="$(systemctl is-enabled ghostpi-splash 2>/dev/null || echo 'disabled')"
+    ok "ghostpi-splash    : $splash_enabled (one-shot, runs at boot)"
+
     local dns_state
     dns_state="$(systemctl is-active dnsmasq 2>/dev/null || echo 'inactive')"
     if [[ "$dns_state" == "active" ]]; then
@@ -168,13 +172,15 @@ mkdir -p "${GHOSTPI_DIR}/logs/handshakes"
 chown -R "${GHOSTPI_USER}:${GHOSTPI_USER}" "${GHOSTPI_DIR}/logs" 2>/dev/null || true
 ok "Log directories OK."
 
-# ── 4. Systemd service ────────────────────────────────────────────────────────
+# ── 4. Systemd services ───────────────────────────────────────────────────────
 
-info "Reinstalling systemd service..."
-cp "${GHOSTPI_DIR}/systemd/ghostpi.service" /etc/systemd/system/ghostpi.service
+info "Reinstalling systemd services..."
+cp "${GHOSTPI_DIR}/systemd/ghostpi.service"        /etc/systemd/system/ghostpi.service
+cp "${GHOSTPI_DIR}/systemd/ghostpi-splash.service" /etc/systemd/system/ghostpi-splash.service
 systemctl daemon-reload
 systemctl enable ghostpi.service
-ok "ghostpi.service reinstalled and enabled."
+systemctl enable ghostpi-splash.service
+ok "ghostpi.service and ghostpi-splash.service reinstalled and enabled."
 
 # ── 5. Network configs ────────────────────────────────────────────────────────
 

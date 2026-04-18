@@ -1,0 +1,26 @@
+[Unit]
+Description=GhostPi boot splash (e-ink)
+# Run after filesystems are mounted (we need to read Python files and fonts)
+# but before the main ghostpi service starts.
+After=local-fs.target
+Before=ghostpi.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/admin/ghostpi
+Environment=PYTHONPATH=/home/admin/ghostpi/ghostpi
+ExecStart=/usr/bin/python3 /home/admin/ghostpi/ghostpi/splash.py
+# Never restart — this is a one-shot draw, not a daemon
+Restart=no
+RemainAfterExit=no
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ghostpi-splash
+
+# Generous timeout for slow SPI init on first boot; 0 = no timeout
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
