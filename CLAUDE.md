@@ -9,6 +9,11 @@ Use it to get up to speed without re-exploring the codebase from scratch.
 > commit and push it along with the rest of the changes.  Do this automatically
 > without being asked.
 
+> **Standing instruction:** Whenever any user-facing behaviour, install step,
+> troubleshooting symptom, or configuration detail changes, update `README.md`
+> to reflect it in the same commit.  Never let the README fall out of sync with
+> the code.
+
 ---
 
 ## What this project is

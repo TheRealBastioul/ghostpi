@@ -232,7 +232,7 @@ sudo bash setup/sdcard-repair.sh --status --boot /run/media/you/bootfs \
 sudo bash setup/sdcard-repair.sh --device /dev/sdb
 ```
 
-The repair script fixes: SSH flag, `custom.toml` credentials, `cmdline.txt`,
+The repair script fixes: user account, SSH service, `cmdline.txt`,
 `config.txt`, `dhcpcd.conf`, and dnsmasq config.
 
 **Common SSH errors:**
@@ -241,7 +241,7 @@ The repair script fixes: SSH flag, `custom.toml` credentials, `cmdline.txt`,
 |-------|-------------|-----|
 | `Connection refused` | SSH not enabled | Run sdcard-repair.sh |
 | `No route to host` | usb0 not up — dwc2 missing from cmdline.txt | Run sdcard-repair.sh |
-| `Permission denied` | Wrong password | Re-run sdcard-repair.sh to reset to admin/ghostpi |
+| `Permission denied` | Wrong password | Re-run `sdcard-repair.sh` — rewrites passwd/shadow with default credentials |
 | Interface doesn't appear on laptop | Wrong USB port (power not data) | Use the port closer to HDMI |
 
 **Check on the Pi (if you can SSH):**
@@ -271,10 +271,10 @@ sudo bash ~/ghostpi/setup/diag-display.sh
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Completely blank | Wrong driver or SPI not enabled | Check `dtparam=spi=on` in config.txt; ensure `adafruit-circuitpython-epd` installed |
+| Completely blank | SPI not enabled or libraries missing | Check `dtparam=spi=on` in config.txt; run `repair.sh` to install adafruit libs |
 | Import error in logs | Libraries not installed | `sudo pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd` |
-| Content shifted/garbled | Wrong driver class | Must use `Adafruit_SSD1680B` not `Adafruit_SSD1680` |
-| Hangs on BUSY pin | Wrong RST/BUSY pin assignment | RST=GPIO27, BUSY=GPIO17 (matches bonnet label) |
+| Content shifted/garbled | Wrong driver class | Must use `Adafruit_SSD1680B` from `adafruit_epd.ssd1680b` — not `Adafruit_SSD1680` |
+| Hangs on BUSY pin | Wrong RST/BUSY pin assignment | RST=GPIO27, BUSY=GPIO17 (matches bonnet label DC:22 / Reset:27 / Busy:17) |
 
 **Check logs:**
 ```bash
