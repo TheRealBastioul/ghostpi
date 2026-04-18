@@ -487,6 +487,30 @@ suppression.
 - All other automation (custom.toml, ssh flag, dhcpcd, dnsmasq, systemd symlinks)
   was already correct — no manual user steps needed for any of these.
 
+**`setup/install.sh`**
+- Was explicitly skipping boot_config.txt with a "manual step" comment and
+  telling users to run `cat boot_config.txt >> /boot/config.txt` themselves.
+  Now applies all settings idempotently, handles `/boot/firmware/` (Trixie path).
+- Added `ghostpi-splash.service` install alongside main service.
+- Added `python3-rpi-lgpio` fallback in apt section.
+- Removed all manual post-install steps from summary; only "reboot" remains.
+
+**`setup/repair.sh`**
+- Added Python package install step: checks `import adafruit_epd` and runs
+  `pip3 install --break-system-packages adafruit-blinka rpi-lgpio
+  adafruit-circuitpython-epd` if missing. Runs before service restart so the
+  service comes up with working display libraries.
+- Fixed boot config section: same single-guard bug as prepare-sd.sh, replaced
+  with per-setting idempotent loop.
+
+**`setup/prepare-sd.sh`**
+- Added `ghostpi-pip.service`: a first-boot systemd oneshot that installs the
+  three pip packages natively on the Pi if QEMU chroot pip failed. Uses
+  `ConditionPathExists=!/var/lib/ghostpi-pip-done` so it only runs once.
+  Installed and enabled alongside the main service. Requires internet on
+  first boot only (Pi has no WiFi in monitor mode yet — USB tethering or
+  wlan0 must be available).
+
 ---
 
 ### 2026-04-18 (session 10)

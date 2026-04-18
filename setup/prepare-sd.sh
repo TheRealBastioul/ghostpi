@@ -363,11 +363,10 @@ set -e
 
 if [[ $PIP_EXIT -ne 0 ]]; then
     PIP_FAILED=true
-    warn "pip install failed (exit $PIP_EXIT) — e-ink display libraries are missing."
-    warn "The rest of the install will continue. You can retry on the Pi:"
-    warn "  pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd"
+    warn "pip install failed inside QEMU chroot (exit $PIP_EXIT)."
+    warn "A first-boot service (ghostpi-pip.service) will retry pip install natively on the Pi."
 else
-    ok "Python packages installed."
+    ok "Python packages installed via QEMU chroot."
 fi
 
 # Remove the service-blocking policy file before we configure services
@@ -454,6 +453,30 @@ cp "$REPO_DIR/systemd/ghostpi-splash.service" "$SYSTEMD_DIR/ghostpi-splash.servi
 ln -sf /etc/systemd/system/ghostpi-splash.service \
        "$WANTS_DIR/ghostpi-splash.service"
 ok "ghostpi-splash.service installed and enabled."
+
+# First-boot pip installer — installs adafruit libs natively on the Pi.
+# Runs before ghostpi-splash so display works on first boot.
+# Uses ConditionPathExists so it only runs once; self-disables after success.
+cat > "$SYSTEMD_DIR/ghostpi-pip.service" << 'EOF'
+[Unit]
+Description=GhostPi first-boot Python package installer
+After=network.target
+Before=ghostpi-splash.service ghostpi.service
+ConditionPathExists=!/var/lib/ghostpi-pip-done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'pip3 install --break-system-packages --no-cache-dir adafruit-blinka rpi-lgpio adafruit-circuitpython-epd && touch /var/lib/ghostpi-pip-done'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+ln -sf /etc/systemd/system/ghostpi-pip.service \
+       "$WANTS_DIR/ghostpi-pip.service"
+ok "ghostpi-pip.service installed (first-boot pip installer — runs once, needs internet on first boot)."
 
 # dnsmasq — find the unit file in the rootfs and create the wants symlink
 DNSMASQ_UNIT=""

@@ -152,10 +152,24 @@ banner "Starting repair"
 
 info "Stopping ghostpi service..."
 systemctl stop ghostpi 2>/dev/null || true
-# Kill any stray airmon-ng / airodump-ng processes left over from a crash
 pkill -f airodump-ng 2>/dev/null || true
 pkill -f airmon-ng   2>/dev/null || true
 ok "Service stopped."
+
+# ── 1a. Python packages ───────────────────────────────────────────────────────
+
+if ! python3 -c "import adafruit_epd" 2>/dev/null; then
+    info "adafruit_epd not found — installing Python packages..."
+    if pip3 install --break-system-packages --no-cache-dir \
+            adafruit-blinka rpi-lgpio adafruit-circuitpython-epd; then
+        ok "Python packages installed (adafruit-blinka, rpi-lgpio, adafruit-circuitpython-epd)."
+    else
+        warn "pip install failed. Try manually:"
+        warn "  sudo pip3 install --break-system-packages adafruit-blinka rpi-lgpio adafruit-circuitpython-epd"
+    fi
+else
+    ok "Python packages already installed."
+fi
 
 # ── 2. Restore monitor interface if stuck ─────────────────────────────────────
 
