@@ -1,0 +1,31 @@
+# Project context for Claude Code — not for version control
+CLAUDE.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs and captures
+logs/
+*.log
+*.pcap
+*.cap
+*.csv
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
